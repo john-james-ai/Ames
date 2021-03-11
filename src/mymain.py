@@ -21,6 +21,7 @@ import pandas as pd
 import scipy as sp
 import numpy as np
 import xgboost
+from collections import OrderedDict
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import SimpleImputer, IterativeImputer
 from sklearn.linear_model import LinearRegression, LassoCV, RidgeCV, ElasticNetCV
@@ -28,6 +29,8 @@ from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 from sklearn.preprocessing import OneHotEncoder, PowerTransformer, ColumnTransformer
 from sklearn.pipeline import make_pipeline
+from sklearn.svm import SVR
+from sklearn.externals import joblib
 import seaborn as sns
 import lightGBM
 # --------------------------------------------------------------------------- #
@@ -38,6 +41,10 @@ class PipelineBuilder:
     def __init__(self, X, y=None):
         self._X = X
         self._y = y
+        self._pipelines = OrderedDict()
+        self._preprocessor = None
+        self._selector = None
+
 
     def build_preprocessor(self):
         continuous = list(self._X.select_dtypes(include=["float64"]).columns)
@@ -51,45 +58,71 @@ class PipelineBuilder:
         )
 
         categorical_pipeline = make_pipeline(
-            SimpleImputer(strategy="constant", fill_value="unknown"),
+            IterativeImputer(),
             OneHotEncoder()
         )
 
         discrete_pipeline = make_pipeline(
-            SimpleImputer(strategy="constant", fill_value=-1)
+            IterativeImputer(),
+            StandardScaler()
         )
 
-        preprocessor = ColumnTransformer(
+        self._preprocessor = ColumnTransformer(
             transformers=[
                 ('continuous', continuous_pipeline, continuous),
                 ('categorical', categorical_pipeline, categorical),
                 ('discrete', discrete_pipeline, discrete)
             ]
         )
-        return preprocessor
+
+    def build_feature_selector(self, estimator, min_features=3):
+        self._selector = RFECV(estimator, min_features_to_select=min_features)
+
+    def build_pipelines(self, estimators=[]):
+
+        self._pipelines = OrderedDict()
+        for e in estimators:
+            self._pipelines[e.__class__.__name__] = Pipeline(steps=[
+                ('preprocessor', self._preprocessor),
+                ('selector', self._selector),
+                ('algorithm': e)
+            ])
+    
+    def get_pipelines(self):
+        return self._pipelines
+
+
+        
 
 # --------------------------------------------------------------------------- #
-#                                  EVALUATE                                   #
+#                                  EVALUATOR                                  #
 # --------------------------------------------------------------------------- #
-def evaluate(pipeline, X_train, y_train, X_test, y_test, verbose = True):
-    """ 
-    Trains model pipeline and evaluates model on test data. Returns the original
-    model, RMSE on log Sales Price, and testing RMSE.
-    """
+class Evaluator:
+    """Trains and evaluates a pipeline"""
 
-    pipeline.fit(X_train, y_train)
-    y_train_pred = pipeline.predict(X_train)
-    y_test_pred = pipeline.predict(X_test)
+    def __init__(self, pipeline, X_train, y_train, X_test, y_test, verbose = True):
+        self._pipeline = pipeline
+        self._X_train = X_train
+        self._y_train = y_train
+        self._X_test = X_test
+        self._y_test = y_test
+        self._verbose = verbose
 
-    train_score = np.sqrt(mean_squared_error(y_train, y_train_pred))
-    test_score = np.sqrt(mean_squared_error(y_test, y_test_pred))
+    def evaluate(self):
 
-    if verbose:
-        print(f"Algorithm: {pipeline.named_steps['algorithm'].__class__.__name__}")
-        print(f"Train RMSE: {train_score}")
-        print(f"Test RMSE: {test_score}")
+        self._pipeline.fit(self._X_train, self._y_train)
+        y_train_pred = pipeline.predict(self._X_train)
+        y_test_pred = pipeline.predict(self._X_test)
 
-    return pipeline.named_steps['algorithm'], train_score, test_score
+        train_score = np.sqrt(mean_squared_error(y_train, y_train_pred))
+        test_score = np.sqrt(mean_squared_error(y_test, y_test_pred))
+
+        if verbose:
+            print(f"Algorithm: {pipeline.named_steps['algorithm'].__class__.__name__}")
+            print(f"Train RMSE: {train_score}")
+            print(f"Test RMSE: {test_score}")
+
+        return pipeline.named_steps['algorithm'], train_score, test_score
 # --------------------------------------------------------------------------- #
 def evaluate_regressors(X_train, y_train, X_test, y_test):
     regressors = [
