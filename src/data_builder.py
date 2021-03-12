@@ -28,34 +28,33 @@ class DataBuilder:
     def __init__(self, inpath="../data/raw/", outpath="../data/interim/"):
         self._inpath = inpath
         self._outpath = outpath
-        self._train = pd.DataFrame()
-        self._train_filenames = []
-        self._numeric_stats = pd.DataFrame()
-        self._categorical_stats = pd.DataFrame()
+        self.X_train = None
+        self.y_train = None
 
     def build_data(self):
+
+        train = pd.DataFrame()
         
         for filename in os.listdir(self._inpath):
             if fnmatch.fnmatch(filename, "*train.csv"):                
                 df = pd.read_csv(os.path.join(self._inpath, filename))
-                self._train = pd.concat((self._train, df), axis=0)
-        print(f"Training data shape is {self._train.shape}")
-        X_train = self._train.loc[:,self._train.columns != "Sale_Price"]      
-        y_train = self._train.loc[:,self._train.columns == "Sale_Price"]      
-        X_train.to_csv(os.path.join(self._outpath, "X_train.csv"), index=False)          
-        y_train.to_csv(os.path.join(self._outpath, "y_train.csv"), index=False)          
+                train = pd.concat((train, df), axis=0)
+        
+        self.X_train = train.loc[:,train.columns != "Sale_Price"]      
+        self.y_train = train.loc[:,train.columns == "Sale_Price"]      
+        self.X_train.to_csv(os.path.join(self._outpath, "X_train.csv"), index=False)          
+        self.y_train.to_csv(os.path.join(self._outpath, "y_train.csv"), index=False)          
     
     def summary(self):
-        self._numeric_stats = self._train.describe(include=[np.number]).T
-        self._categorical_stats = self._train.describe(include=[object]).T
-        percent_missing = self._train.isnull().sum() * 100 / len(self._train)
-        missing = pd.DataFrame({"Column": self._train.columns,
+        print("_"*40)
+        print("X_Train")
+        print("_"*40)
+        print(self.X_train.info())
+        print(self.X_train.shape)
+        percent_missing = self.X_train.isnull().sum() * 100 / len(self.X_train)
+        missing = pd.DataFrame({"Column": self.X_train.columns,
                                 "Percent Missing": percent_missing})
         missing.sort_values("Percent Missing", inplace=True, ascending=False)
-        print("Numeric Variable Descriptive Statistics")
-        print(tabulate(self._numeric_stats, headers="keys"))
-        print("\n\nCategorical Variable Descriptive Statistics")
-        print(tabulate(self._categorical_stats, headers="keys"))
         print("\n\nMissing Values")
         print(tabulate(missing[missing["Percent Missing"]>0], headers="keys", showindex=False))
 
