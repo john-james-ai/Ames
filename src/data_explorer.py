@@ -30,6 +30,8 @@ def categorical_metadata(X):
     detail = pd.DataFrame()
 
     for var_type, variables in categoricals.items():        
+        detail = pd.DataFrame()
+        filename = var_type + ".csv"
         for variable in variables:
             # Summary information
             d = {"Type": var_type, "Variable": variable, "nLevels": X[variable].nunique()} 
@@ -42,9 +44,9 @@ def categorical_metadata(X):
             df["Variable"] = variable
             df = df[["Type", "Variable", "Levels", "Counts"]]            
             detail = pd.concat([detail,df], axis=0)
+        detail.to_csv(os.path.join(data_paths["metadata"],filename), index=False)
 
-    summary.to_csv(os.path.join(data_paths["metadata"],"categorical_summary.csv"), index=False)
-    detail.to_csv(os.path.join(data_paths["metadata"],"categorical_detail.csv"), index=False)
+    summary.to_csv(os.path.join(data_paths["metadata"],"categorical_summary.csv"), index=False)    
     print(f"{detail.shape[0]} categorical variables and levels.")        
     print(summary)
 

@@ -34,6 +34,38 @@ from sklearn.externals import joblib
 import seaborn as sns
 import lightGBM
 # --------------------------------------------------------------------------- #
+#                               DATA PREPROCESSING                            #
+# --------------------------------------------------------------------------- #
+def preprocess(X,y):
+    """Preprocesses the data before feature engineering."""
+    # Drop unnecessary columns
+    X = X.drop(columns=["Latitude", "Longitude"])
+    # Drop known outliers based upon DeCock's recommendation
+    X = X[X["Gr_Live_Area"] <= 4000] 
+
+    return X
+# --------------------------------------------------------------------------- #
+def add_features(X):
+    X["Age"] = X["Year_Sold"] - X["Year_Built"]
+    return X
+# --------------------------------------------------------------------------- #
+def transform_target(y):
+    y["Sale_Price_Log"] = np.log(y["Sale_Price"])    
+    y = y.drop(columns=["Sale_Price"])
+    return y
+# --------------------------------------------------------------------------- #    
+def encode_ordinal(X):
+    """Encodes ordinal variables as integers in ascending order of positive price affect."""
+    filename = "ordered.csv"
+    codes = pd.read_csv(os.path.join(data_paths["metadata"], filename))
+
+    #TODO: Fix this.
+    variables = codes.groupby("Variable")
+    for variable, group in variables:
+        for seq, level in zip(group["Order"], group["Levels"]):
+            X.replace({level:seq}, inplace=True)
+
+# --------------------------------------------------------------------------- #
 #                               PIPELINE BUILDER                              #
 # --------------------------------------------------------------------------- #
 class PipelineBuilder:

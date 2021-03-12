@@ -1,8 +1,27 @@
 # Notes
 ## Data Preparation
-Only missing data was Garage_Yr_Blt with about 5% missing values. These observations are likely homes without garages. Removing it from further analysis.
+The data were prepared in four stages:
+1. Data Preprocessing
+2. Feature Engineering
+3. Data Transformation
+4. Feature Selection
+5. Encoding
 
-Eliminate all sales except for the “normal” from the SALES CONDITION variable. Unless an instructor specifically wants to create an activity that investigates the difference between the various types of sales (foreclosures, new homes, family sales, etc.) the different conditions will simply serve to complicate the results and confuse the students. 
+Before preprocessing, the data were split into training, validation and test sets. The data preparation pipeline was constructed and each set was prepared separately.
 
-Removed all homes with GR LIVE AREA greater than 4000 square feet as per the following recommendation.
-Remove all homes with a living area (GR LIVE AREA) above 1500 square feet. The purpose to the second step is to alleviate problems with non-homogeneous variance. As might be expected there is increasing variation with increasing price within the Ames housing market. This problem can be remedied by taking a transformation (square root) of the sales price but those wishing to keep the response in dollars can simply use the smaller homes as they tend to show more homogeneous variation. 
+### Data Preprocessing
+1. Removed all homes with GR LIVE AREA greater than 4000 square as per DeCock's recommendation. 
+3. Remove latitude and longitude
+
+Things to consider:
+1. Cap some continous variables at 95% ile.
+2. Remove extremely inbalanced categorical variables. See what RECV does first.
+
+### Feature Engineering
+1. Added Age of home at time of sale by subtracting Year_Built from Year_Sold.
+
+### Data Transformation
+1.  Transformed target to Log Sales Priced.
+2.  Transformed all ordinal variables to integers.
+3.  Transformed all nominal variables using feature hashing.
+4.  Continuous (Floating Point) variables were power transformed according to... [see Scikit Learn documentation]
