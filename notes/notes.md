@@ -5,7 +5,8 @@ The data were prepared in four stages:
 2. Feature Engineering
 3. Data Transformation
 4. Feature Selection
-5. Encoding
+5. Outlier Detection and Treatment. 
+7. One-Hot-Encoding
 
 Before preprocessing, the data were split into training, validation and test sets. The data preparation pipeline was constructed and each set was prepared separately.
 

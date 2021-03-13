@@ -21,6 +21,7 @@ import os
 import pandas as pd
 import numpy as np
 from tabulate import tabulate
+import pprint
 
 from globals import data_paths, categoricals
 from data import Ames
@@ -50,10 +51,31 @@ def categorical_metadata(X):
     print(f"{detail.shape[0]} categorical variables and levels.")        
     print(summary)
 
+def create_ordinal_map():
+    filename = "ordered.csv"
+    codes = pd.read_csv(os.path.join(data_paths["metadata"], filename))
+    ordinal_map = {}
+    levels = {}
+
+    variables = codes.groupby("Variable")
+    for variable, group in variables:
+        levels = dict(zip(group["Levels"], group["Order"]))
+        ordinal_map[variable] = levels
+    pp = pprint.PrettyPrinter(compact=True, width=100)
+    pp.pprint(ordinal_map)
+    
+def create_nominal_map():
+    filename = "categorical_summary.csv"
+    categoricals = pd.read_csv(os.path.join(data_paths["metadata"], filename))
+    nominals = categoricals[categoricals["Type"]=="nominal"]["Variable"]
+    pp = pprint.PrettyPrinter(compact=True, width=100)
+    pp.pprint(list(nominals))
+
 def main():
-    ames = Ames()
-    X, y = ames.read()   
-    categorical_metadata(X)
+    # ames = Ames()
+    # X, y = ames.read()   
+    # categorical_metadata(X)
+    create_nominal_map()
 
 if __name__ == "__main__":
     main()
