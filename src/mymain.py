@@ -25,28 +25,33 @@ from collections import OrderedDict
 import numpy as np
 import pandas as pd
 import scipy as sp
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import IterativeImputer
+from sklearn.impute import IterativeImputer, SimpleImputer
 from sklearn.neighbors import LocalOutlierFactor
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 from sklearn.preprocessing import OneHotEncoder, PowerTransformer
 
 # Feature and model selection and evaluation
+from sklearn.feature_selection import RFECV
 from sklearn.metrics import make_scorer
 from sklearn.model_selection import KFold
-from sklearn.pipeline import make_pipeline
+from sklearn.pipeline import make_pipeline, Pipeline
+from sklearn.model_selection import GridSearchCV
 
 # Regression based estimators
 from sklearn.linear_model import LinearRegression, Lasso, Ridge, ElasticNet
 
 # Tree-based estimators
+from sklearn.experimental import enable_hist_gradient_boosting
 from sklearn.ensemble import AdaBoostRegressor, BaggingRegressor, ExtraTreesRegressor
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.ensemble import HistGradientBoostingRegressor
 
 # Visualizing data
 import seaborn as sns
+import matplotlib.pyplot as plt
 
 # =========================================================================== #
 #                               2. GLOBALS                                    #
@@ -95,10 +100,9 @@ ordinal_map = {'BsmtFin_Type_1': {'ALQ': 5, 'BLQ': 4, 'GLQ': 6, 'LwQ': 2, 'No_Ba
 # =========================================================================== #
 class AmesDataIO:
     """Ames data sources, including training and cross-validation data sets."""
-    def __init__(self, url):
-        self._url = url
-        self._filepath_train = "../data/train/"
-        self._filepath_cv = "../data/cv/"
+    def __init__(self, filepath_train="../data/train/", filepath_cv="../data/cv/"):        
+        self._filepath_train = filepath_train
+        self._filepath_cv = filepath_cv
 
     def get_train(self):
         """Returns training set X, y data."""
@@ -127,6 +131,63 @@ class AmesDataIO:
 # =========================================================================== #
 #                          4. DATA PREPROCESSING                              #
 # =========================================================================== #
+class ContinuousPreprocessor(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        pass
+
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        continuous = list(X.select_dtypes(include=["float64"]).columns)
+        # Create imputer and power transformer objects
+        imputer = IterativeImputer()
+        power = PowerTransformer(method="yeo-johnson", standardize=True)
+        
+        # Perform imputation of continuous variables
+        X[continuous] = imputer.fit_transform(X[continuous])
+
+        # Perform power transformations to make data closer to Guassian distribution
+        X[continuous] = power.fit_transform(X[continuous])
+        
+        return X
+# --------------------------------------------------------------------------- #
+class CategoricalPreprocessor(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        pass
+
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        categorical = list(X.select_dtypes(include=["object"]).columns)
+        # Create imputer object
+        imputer = SimpleImputer(strategy="most_frequent")
+        
+        # Perform imputation of categorical variables to most frequent
+        X[categorical] = imputer.fit_transform(X[categorical])
+        
+        return X        
+# --------------------------------------------------------------------------- #
+class DiscretePreprocessor(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        pass
+
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        discrete = list(X.select_dtypes(include=["int"]).columns)
+        # Create imputer and scaler objects
+        imputer = SimpleImputer(strategy="most_frequent")
+        scaler = StandardScaler()        
+        
+        # Perform imputation of categorical variables to most frequent
+        X[discrete] = imputer.fit_transform(X[discrete])
+        X[discrete] = scaler.fit_transform(X[discrete])
+        
+        return X        
+        
 def build_preprocessor(X, y=None):
     """Builds the data processing component of the pipeline."""
     continuous = list(X.select_dtypes(include=["float64"]).columns)
@@ -160,47 +221,147 @@ def build_preprocessor(X, y=None):
 # =========================================================================== #
 #                          5. FEATURE ENGINEERING                             #
 # =========================================================================== #    
-def feature_engineering(X,y=None):
-    """Creation, removal, and encoding of features."""
-    # Add an age feature and remove year built
-    X["Age"] = X["Year_Sold"] - X["Year_Built"]
-    X["Age"].fillna(X["Age"].median())
-    X.drop(columns=["Year_Built"], inplace=True)
+class FeatureEngineer(BaseEstimator, TransformerMixin):
+    def __init__(self, ordinal_map=ordinal_map):
+        self._ordinal_map = ordinal_map
 
-    # Remove longitude and latitude
-    X = X.drop(columns=["Latitude", "Longitude"])
+    def fit(self, X, y=None, **fit_params):
+        return self
+    
+    def transform(self, X, **transform_params):
+        """Creation, removal, and encoding of features."""
+        # Add an age feature and remove year built
+        X["Age"] = X["Year_Sold"] - X["Year_Built"]
+        X["Age"].fillna(X["Age"].median())
+        X.drop(columns=["Year_Built"], inplace=True)
 
-    ## Encode ordinal features
-    for variable, mappings in ordinal_map:
-        for k,v in mappings.items():
-            X[variable].replace({k:v}, inplace=True)    
+        # Remove longitude and latitude
+        X = X.drop(columns=["Latitude", "Longitude"])
 
-    return X
+        ## Encode ordinal features
+        for variable, mappings in self._ordinal_map:
+            for k,v in mappings.items():
+                X[variable].replace({k:v}, inplace=True)    
 
-# --------------------------------------------------------------------------- #    
-def encode_nominal(X,y=None):
-    """One hot encodes nominal features. This is performed AFTER feature selection."""
-  
-    n = X.shape[0]
-    # Extract nominals from X
-    X_nominals = X[nominals]   
-    X.drop(nominals, axis=1, inplace=True)    
-    n_other_features = X.shape[1]
+        return X
+# --------------------------------------------------------------------------- #
+class OrdinalEncoder(BaseEstimator, TransformerMixin):
+    def __init__(self, ordinal_map=ordinal_map):
+        self._ordinal_map = ordinal_map
 
-    # Encode nominals and store in dataframe with feature names
-    enc = OneHotEncoder()
-    X_nominals = enc.fit_transform(X_nominals).toarray()
-    X_nominals = pd.DataFrame(data=X_nominals)
-    X_nominals.columns = enc.get_feature_names()
+    def fit(self, X, y=None, **fit_params):
+        return self
+    
+    def transform(self, X, **transform_params):
+        for variable, mappings in self._ordinal_map:
+            for k,v in mappings.items():
+                X[variable].replace({k:v}, inplace=True)    
 
-    # Concatenate X with X_nominals and validate    
-    X = pd.concat([X, X_nominals], axis=1)
-    expected_shape = (n,n_other_features+n_total_feature_levels)
-    assert(X.shape == expected_shape), "Error in Encode Nominal. X shape doesn't match expected."
+        return X        
+# --------------------------------------------------------------------------- #
+class NominalEncoder(BaseEstimator, TransformerMixin):
+    
+    def __init__(self, nominals=nominals):
+        self._nominals = nominals
 
-    return X
+    def fit(self, X, y=None, **fit_params):
+        return self
+    
+    def transform(self, X, **transform_params):
+        """Converting nominal variables to one-hot representation."""
+        n = X.shape[0]
+        # Extract nominals from X
+        nominals = pd.Series(self._nominals)
+        features = X.columns
+        nominal_features = features[features.isin(nominals)]
+        X_nominals = X[nominal_features]   
+        X.drop(nominal_features, axis=1, inplace=True)    
+        n_other_features = X.shape[1]
+
+        # Encode nominals and store in dataframe with feature names
+        enc = OneHotEncoder()
+        X_nominals = enc.fit_transform(X_nominals).toarray()
+        X_nominals = pd.DataFrame(data=X_nominals)
+        X_nominals.columns = enc.get_feature_names()
+
+        # Concatenate X with X_nominals and validate    
+        X = pd.concat([X, X_nominals], axis=1)
+        expected_shape = (n,n_other_features+n_total_feature_levels)
+        assert(X.shape == expected_shape), "Error in Encode Nominal. X shape doesn't match expected."
+
+        return X
+
 # =========================================================================== #
-#                               4. ESTIMATORS                                 #
+#                           6. PIPELINE RFE                                   #
+# =========================================================================== #   
+class PipelineRFE(Pipeline):
+    # Source: https://ramhiser.com/post/2018-03-25-feature-selection-with-scikit-learn-pipeline/
+    def fit(self, X, y=None, **fit_params):
+        super(PipelineRFE, self).fit(X, y, **fit_params)
+        self.feature_importances_ = self.steps[-1][-1].feature_importances_
+        return self
+
+# =========================================================================== #
+#                             7. SCORING                                      #
+# =========================================================================== #   
+def rmse(y_true, y_pred):
+    return np.sqrt(np.mean((y_true-y_pred)**2))
+rmse = make_scorer(rmse, greater_is_better=False)    
+# =========================================================================== #
+#                         8. FEATURE SELECTION                                #
+# =========================================================================== #   
+class DataPipeline(BaseEstimator, TransformerMixin):
+    """Performs feature selection using Recursive Feature Elimination with CV."""
+    def __init__(self, estimator, cv=5, scoring=rmse, min_features=1):
+        self._estimator = estimator
+        self._cv = cv
+        self._scoring = scoring
+        self._min_features = min_features
+        self._feature_selector = None
+
+    def fit(self, X, y=None, **fit_params):
+        return self
+    
+    def transform(self, X, y, **transform_params):
+        # Define the pipeline for RFECV
+        preprocessor = build_preprocessor(X)
+        steps = [("preprocessor", preprocessor),
+                 ("features", FeatureEngineer()),
+                 ("nominal", NominalEncoder()),
+                 ("ordinal", OrdinalEncoder()),
+                 ("estimator", self._estimator)]
+        pipe = PipelineRFE(steps=steps)
+
+        # Initialize the RFECV object
+        self._feature_selector = RFECV(pipe, cv=self._cv, step=1, scoring=self._scoring)
+
+        # Fit RFECV
+        print(f"Inside DataPipeline transform and y shape is {y.shape}")
+        self._feature_selector.fit(X,y)
+
+        # Get selected features
+        feature_names = X.columns
+        self.selected_features = feature_names[self._feature_selector.support_].tolist()
+        return X[self.selected_features]
+
+    def plot(self):
+        sns.set_style("whitegrid")
+        fig, ax = plt.subplots(figsize=(10,12))
+        x = range(self._min_features, len(self._feature_selector.grid_scores_)+self._min_features)
+        y = self._feature_selector.grid_scores_
+        d = {"x": x, "y":y}
+        df = pd.DataFrame(d)
+        ax = sns.lineplot(x=x, y=y, data=df)
+        plt.xlabel("Number of Features Selected")
+        plt.ylabel("Cross Validation Score (RMSE)")
+        plt.title("Recursive Feature Elimination via Cross-Validation")
+        plt.tight_layout()
+        plt.show()
+
+
+
+# =========================================================================== #
+#                              10. ESTIMATORS                                 #
 # =========================================================================== #
 regressors = {}
 regressors.update({"Linear Regression": LinearRegression()})
@@ -218,11 +379,11 @@ ensembles.update({"Histogram Gradient Boosting": HistGradientBoostingRegressor()
 
 
 # =========================================================================== #
-#                           5. HYPERPARAMETERS                                #
+#                          11. HYPERPARAMETERS                                #
 # =========================================================================== #
 # Parameter Grid
 regressor_parameters = {}
-regressor_parameters.update({"Linear Regression":})
+regressor_parameters.update({"Linear Regression":[]})
 regressor_parameters.update({"Lasso": {
     "estimator__alpha": [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.25, 0.50, 0.75, 1.0],
     "estimator__n_jobs": [-1]}})
@@ -271,203 +432,67 @@ ensemble_parameters.update({"Histogram Gradient Boosting": {
         "estimator__learning_rate": [0.15,0.1,0.05,0.01,0.005,0.001],              
         "estimator__max_depth": [2,3,4,5,6],        
         "estimator__min_samples_leaf": [0.005, 0.01, 0.05, 0.10]}})                                        
-# --------------------------------------------------------------------------- #
-#                              FEATURE SELECTION                              #
-# --------------------------------------------------------------------------- #
+# =========================================================================== #
+#                           12. MODEL EVALUATION                              #
+# =========================================================================== #
+class ModelEvaluator:
+    def __init__(self, data_pipeline, estimator, parameters):
+        self._data_pipeline = data_pipeline
+        self._estimator = estimator
+        self._parameters = parameters        
 
+    def fit(self, X, y=None):
+        # Prepare data and perform feature selection
+        self._data_pipeline.fit(X,y)
+        X = self._data_pipeline.transform(X,y) 
+        self._data_pipeline.plot()
 
-# --------------------------------------------------------------------------- #
-#                               TRANSFORMERS                                  #
-# --------------------------------------------------------------------------- #
-def transform_target(y):    
-    y["Sale_Price"] = np.log(y["Sale_Price"])        
-    return y
+        # Initialize GridSearchCV object and fit the search
+        gscv = GridSearchCV(estimator=self._estimator,
+                             param_grid=self._parameters)
+        gscv.fit(X,y)
 
-def inverse_transform_target(y):    
-    y["Sale_Price"] = np.exp(y["Sale_Price"])            
-    return y    
-# --------------------------------------------------------------------------- #
-#                                PROCESSORS                                   #
-# --------------------------------------------------------------------------- #
-def process_train(X, y=None):
-    """Processes training data."""
-    X = add_features(X)
-    X = remove_features(X)
-    X = treat_outliers(X)
-    X = encode_ordinal(X)
-    X = encode_nominal(X)
-    y = transform_target(y)
-    return X, y
-# --------------------------------------------------------------------------- #
-def process_test(X, y=None):
-    """Processes test data."""
-    X = add_features(X)
-    X = remove_features(X)
-    X = treat_outliers(X)
-    X = encode_ordinal(X)
-    X = encode_nominal(X)
-    return X, y    
-
-
-# --------------------------------------------------------------------------- #
-#                                 SCORERS                                     #
-# --------------------------------------------------------------------------- #
-def rmse(y_true, y_pred):
-    return np.sqrt(np.mean((y_true-y_pred)**2))
-rmse = make_scorer(rmse, greater_is_better=False)    
-# --------------------------------------------------------------------------- #
-#                              DATA PIPELINE                                  #
-# --------------------------------------------------------------------------- #
-class AmesPipeline:
-    """Data pipeline for preprocessing, feature engineering and selection."""
-    def __init__(self, estimators, cv=KFold(n_splits=5,random_state=random_state),
-                 scoring=rmse, n_jobs=2):
-        self._estimators = estimators
-        self._cv = cv
-        self._scoring = scoring
-        self._n_jobs = n_jobs
-        self._X = None
-        self._y = None
-        self._preprocessor = None        
-        self._features_by_estimator = {}
-
-    def _build_preprocessor(self):
-        """Builds the data processing components of the pipeline."""
-        continuous = list(self._X.select_dtypes(include=["float64"]).columns)
-        categorical = list(self._X.select_dtypes(include=["object"]).columns)
-        discrete = list(self._X.select_dtypes(include=["int"]).columns)
-        features = list(self._X.columns)
-
-        continuous_pipeline = make_pipeline(
-            IterativeImputer(),
-            PowerTransformer(method="yeo-johnson", standardize=True)
-        )
-
-        categorical_pipeline = make_pipeline(
-            IterativeImputer(),
-            OneHotEncoder()
-        )
-
-        discrete_pipeline = make_pipeline(
-            IterativeImputer(),
-            StandardScaler()
-        )
-
-        features_pipeline = FunctionTransformer(process_train, validate=False)
-
-        self._preprocessor = ColumnTransformer(
-            transformers=[
-                ('continuous', continuous_pipeline, continuous),
-                ('categorical', categorical_pipeline, categorical),
-                ('discrete', discrete_pipeline, discrete),
-                ('features', features_pipeline, features)
-            ]
-        )
-
-    def _build_feature_selector(self):
-        """Builds a RFECV feature selector."""
-        if not self._preprocessor:
-            self._build_preprocessor
-        
-        for estimator in self._estimators:
-            self._selector = RFECV(estimator, cv=self._cv, scoring=self._scoring, n_jobs=self._n_jobs)
-
-    def build_pipelines(self, estimators=[]):
-
-        # self._pipelines = OrderedDict()
-        # for e in estimators:
-        #     self._pipelines[e.__class__.__name__] = Pipeline(steps=[
-        #         ('preprocessor', self._preprocessor),
-        #         ('selector', self._selector),
-        #         ('algorithm': e)
-        #     ])
-        pass
-    
-    def get_pipelines(self):
-        return self._pipelines
-
-
-        
-
-# --------------------------------------------------------------------------- #
-#                                  EVALUATOR                                  #
-# --------------------------------------------------------------------------- #
-class Evaluator:
-    """Trains and evaluates a pipeline"""
-
-    def __init__(self, pipeline, X_train, y_train, X_test, y_test, verbose = True):
-        self._pipeline = pipeline
-        self._X_train = X_train
-        self._y_train = y_train
-        self._X_test = X_test
-        self._y_test = y_test
-        self._verbose = verbose
-
-    def evaluate(self):
-
-        self._pipeline.fit(self._X_train, self._y_train)
-        y_train_pred = pipeline.predict(self._X_train)
-        y_test_pred = pipeline.predict(self._X_test)
-
-        train_score = np.sqrt(mean_squared_error(y_train, y_train_pred))
-        test_score = np.sqrt(mean_squared_error(y_test, y_test_pred))
-
-        if verbose:
-            print(f"Algorithm: {pipeline.named_steps['algorithm'].__class__.__name__}")
-            print(f"Train RMSE: {train_score}")
-            print(f"Test RMSE: {test_score}")
-
-        return pipeline.named_steps['algorithm'], train_score, test_score
-# --------------------------------------------------------------------------- #
-def evaluate_regressors(X_train, y_train, X_test, y_test):
-    regressors = [
-        LinearRegression(),
-        LassoCV(),
-        RidgeCV()
-    ]
-
-    preprocessor = build_preprocessor(X_train)    
-
-    for r in regressors:
-        pipe = Pipeline(steps = [
-            ('preprocessor', preprocessor),
-            ('algorithm',r)
-        ])
-
-        evaluate(pipe, X_train, y_train, X_test, y_test)    
-# --------------------------------------------------------------------------- #
-#                                  GET DATA                                   #
-# --------------------------------------------------------------------------- #
-def get_data(set_id):
-    directory = "../../data/raw/"
-    train_file = os.path.join(directory, str(set_id) + "_train.csv")
-    test_file =  os.path.join(directory, str(set_id) + "_test.csv")
-    test_file_y = os.path.join(directory, str(set_id) + "_test_y.csv")
-
-    train = pd.read_csv(train_file)
-    X_train = train.drop("SalePrice", axis=1)
-    y_train = np.log(train.loc[:,df.columns == "SalePrice"])
-    X_test = pd.read_csv(test_file)
-    y_test = pd.read_csv(test_file_y)
-    return X_train, y_train, X_test, y_test
+        # Get the best parameters and score
+        self.best_params = gscv.best_params_
+        self.best_score = gscv.best_score_
 
 # --------------------------------------------------------------------------- #
 #                                    MAIN                                     #
 # --------------------------------------------------------------------------- #    
 def main():
-    estimators = [
-            LinearRegression(),
-            Lasso(),
-            Ridge(),
-            ElasticNet(),
-            DecisionTreeRegressor(),
-            RandomForestRegressor(),
-            AdaBoostRegressor(),
-            GradientBoostingRegressor()
-            ]    
-    X = pd.read_csv(os.path.join(data_paths["interim"], "X_train.csv"))
-    y = pd.read_csv(os.path.join(data_paths["interim"], "y_train.csv"))
-    X = treat_outliers(X)
+    # Obtain the data
+    io = AmesDataIO()
+    X, y = io.get_train()
+    print(X.shape)
+    print(y.shape)
+
+    best_params = {}
+    best_scores = {}
+
+    # Train and evaluate regression models
+    for name, estimator in regressors.items():
+        # Instantiate, run and plot data pipeline
+        data_pipeline = DataPipeline(estimator)
+        data_pipeline.fit(X,y)
+        X = data_pipeline.transform(X,y)
+        data_pipeline.plot()
+
+        # Obtain GridSearchCV parameters for estimator
+        parameters = regressor_parameters[name]
+
+        # Instantiate Model evaluator and perform tuning and evaluation
+        evaluator = ModelEvaluator(data_pipeline, estimator, parameters)
+        evaluator.fit(X,y)
+
+        # Store parameters and scores 
+        best_params[name] = evaluator.best_params
+        best_scores[name] = evaluator.best_score
+
+        # Print scores 
+        print(f"Best score for {name}: {evaluator.best_score}")
+
+
+
 if __name__ == "__main__":
     main()
 #%%
