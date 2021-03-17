@@ -20,29 +20,13 @@
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import OneHotEncoder
-import os
+from mymain import ordinal_map
 
-from globals import data_paths
+x = [1,2,3,4,5,6,7,8,9,0]
+y = [0,9,8,7,6,5,4,3,2,1]
+df = pd.DataFrame(data=x, columns=['x'])
+y = pd.DataFrame(data=y, columns=['y'])
+idx = df[df['x'] < 5].index.tolist()
+print(idx)
+print(y.iloc[idx])
 
-enc = OneHotEncoder()
-
-summary = "categorical_summary.csv"
-X_filename = "X_train.csv"
-codes = pd.read_csv(os.path.join(data_paths["metadata"], summary))
-X = pd.read_csv(os.path.join(data_paths["interim"], X_filename))
-
-nominals = codes[codes["Type"] == "nominal"]["Variable"]
-
-X_nom = X[nominals]   
-print(f"X_nom.shape is {X_nom.shape}") 
-print(f"X.shape before is {X.shape}")
-X.drop(nominals, axis=1, inplace=True)
-print(f"X.shape after is {X.shape}")
-X_enc = enc.fit_transform(X_nom).toarray()
-X_enc_df = pd.DataFrame(data=X_enc)
-X_enc_df.columns = enc.get_feature_names()
-
-print(f"X_nom.shape is {X_enc_df.shape}") 
-print(X_enc_df.head())
-X = pd.concat([X, X_enc_df], axis=1)
-print(f"Final X.shape is {X.shape}")

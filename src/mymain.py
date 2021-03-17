@@ -20,6 +20,12 @@
 #                               1. LIBRARIES                                  #
 # =========================================================================== #
 #%%
+# System and python libraries
+import datetime
+import glob
+from joblib import dump, load
+import os
+import pickle
 # Manipulating, analyzing and processing data
 from collections import OrderedDict
 import numpy as np
@@ -34,10 +40,10 @@ from sklearn.preprocessing import FunctionTransformer, StandardScaler
 from sklearn.preprocessing import OneHotEncoder, PowerTransformer
 
 # Feature and model selection and evaluation
-from sklearn.feature_selection import RFECV
+from sklearn.feature_selection import RFE, SelectKBest, mutual_info_regression
 from sklearn.metrics import make_scorer
 from sklearn.model_selection import KFold
-from sklearn.pipeline import make_pipeline, Pipeline
+from sklearn.pipeline import make_pipeline, Pipeline, FeatureUnion
 from sklearn.model_selection import GridSearchCV
 
 # Regression based estimators
@@ -59,16 +65,29 @@ import matplotlib.pyplot as plt
 random_state = 9876
 discrete =  ["Year_Built","Year_Remod_Add","Bsmt_Full_Bath","Bsmt_Half_Bath",
     "Full_Bath","Half_Bath","Bedroom_AbvGr","Kitchen_AbvGr","TotRms_AbvGrd",
-    "Fireplaces","Garage_Cars","Mo_Sold","Year_Sold"],
+    "Fireplaces","Garage_Cars","Mo_Sold","Year_Sold","Age"]
 continuous = ["Lot_Frontage","Lot_Area","Mas_Vnr_Area","BsmtFin_SF_1","BsmtFin_SF_2",
     "Bsmt_Unf_SF","Total_Bsmt_SF","First_Flr_SF","Second_Flr_SF","Low_Qual_Fin_SF",
     "Gr_Liv_Area","Garage_Area","Wood_Deck_SF","Open_Porch_SF","Enclosed_Porch",
     "Three_season_porch","Screen_Porch","Pool_Area","Misc_Val"]
+numeric = ["Lot_Frontage","Lot_Area","Mas_Vnr_Area","BsmtFin_SF_1","BsmtFin_SF_2",
+    "Bsmt_Unf_SF","Total_Bsmt_SF","First_Flr_SF","Second_Flr_SF","Low_Qual_Fin_SF",
+    "Gr_Liv_Area","Garage_Area","Wood_Deck_SF","Open_Porch_SF","Enclosed_Porch",
+    "Three_season_porch","Screen_Porch","Pool_Area","Misc_Val",
+    "Year_Built","Year_Remod_Add","Bsmt_Full_Bath","Bsmt_Half_Bath",
+    "Full_Bath","Half_Bath","Bedroom_AbvGr","Kitchen_AbvGr","TotRms_AbvGrd",
+    "Fireplaces","Garage_Cars","Mo_Sold","Year_Sold"]
 n_nominal_levels = 189
-nominals = ['MS_SubClass', 'MS_Zoning', 'Street', 'Alley', 'Land_Contour', 'Lot_Config', 'Neighborhood',
+nominal = ['MS_SubClass', 'MS_Zoning', 'Street', 'Alley', 'Land_Contour', 'Lot_Config', 'Neighborhood',
  'Condition_1', 'Condition_2', 'Bldg_Type', 'House_Style', 'Roof_Style', 'Roof_Matl',
  'Exterior_1st', 'Exterior_2nd', 'Mas_Vnr_Type', 'Foundation', 'Heating', 'Central_Air',
  'Garage_Type', 'Misc_Feature', 'Sale_Type', 'Sale_Condition']
+
+ordinal = ['BsmtFin_Type_1', 'BsmtFin_Type_2', 'Bsmt_Cond', 'Bsmt_Exposure', 
+'Bsmt_Qual', 'Electrical', 'Exter_Cond', 'Exter_Qual', 'Fence', 'Fireplace_Qu', 
+'Functional', 'Garage_Cond', 'Garage_Finish', 'Garage_Qual', 'Heating_QC', 'Kitchen_Qual', 
+'Land_Slope', 'Lot_Shape', 'Overall_Cond', 'Overall_Qual', 'Paved_Drive', 'Pool_QC', 'Utilities']
+
 ordinal_map = {'BsmtFin_Type_1': {'ALQ': 5, 'BLQ': 4, 'GLQ': 6, 'LwQ': 2, 'No_Basement': 0, 'Rec': 3, 'Unf': 1},
  'BsmtFin_Type_2': {'ALQ': 5, 'BLQ': 4, 'GLQ': 6, 'LwQ': 2, 'No_Basement': 0, 'Rec': 3, 'Unf': 1},
  'Bsmt_Cond': {'Excellent': 5, 'Fair': 2, 'Good': 4, 'No_Basement': 0, 'Poor': 1, 'Typical': 3},
@@ -127,19 +146,57 @@ class AmesDataIO:
         y_test = pd.read_csv(os.path.join(self._filepath_cv,test_y_filename))
 
         return X_train, y_train, X_test, y_test
+# =========================================================================== #
+#                          4. COLUMN SELECTOR                                 #
+# =========================================================================== #    
+class ColumnSelector(BaseEstimator, TransformerMixin):
+    """Select only specified columns."""
+    def __init__(self, data_type):
+        self._data_type = data_type
+        
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        return X[self._data_type]
 
 # =========================================================================== #
-#                          4. DATA PREPROCESSING                              #
+#                          5. DATA SCREENER                                   #
+# =========================================================================== #    
+class DataScreener(BaseEstimator, TransformerMixin):
+    def __init__(self, ordinal_map=ordinal_map):
+        self._ordinal_map = ordinal_map
+
+    def fit(self, X, y=None, **fit_params):
+        return self
+    
+    def transform(self, X, y, **transform_params):
+        """Creation, removal, and encoding of features."""
+        # Add an age feature and remove year built
+        X["Age"] = X["Year_Sold"] - X["Year_Built"]
+        X["Age"].fillna(X["Age"].median())
+
+        # Remove longitude and latitude
+        X = X.drop(columns=["Latitude", "Longitude"])
+
+        # Remove outliers 
+        idx = X[X["Gr_Liv_Area"] < 4000].index.tolist()
+        X = X.iloc[idx]
+        y = y.iloc[idx]
+
+        return X, y        
+# =========================================================================== #
+#                        6. DATA PREPROCESSING                                #
 # =========================================================================== #
 class ContinuousPreprocessor(BaseEstimator, TransformerMixin):
     def __init__(self):
         pass
 
-    def fit(self, X, y=None):
+    def fit(self, X, y=None, **fit_params):
         return self
     
-    def transform(self, X):
-        continuous = list(X.select_dtypes(include=["float64"]).columns)
+    def transform(self, X, **transform_params):       
+        print(f"{self.__class__.__name__} transforming X of shape {X.shape}.") 
         # Create imputer and power transformer objects
         imputer = IterativeImputer()
         power = PowerTransformer(method="yeo-johnson", standardize=True)
@@ -148,6 +205,7 @@ class ContinuousPreprocessor(BaseEstimator, TransformerMixin):
         X[continuous] = imputer.fit_transform(X[continuous])
 
         # Perform power transformations to make data closer to Guassian distribution
+        # Data is standardized as well
         X[continuous] = power.fit_transform(X[continuous])
         
         return X
@@ -156,10 +214,11 @@ class CategoricalPreprocessor(BaseEstimator, TransformerMixin):
     def __init__(self):
         pass
 
-    def fit(self, X, y=None):
+    def fit(self, X, y=None, **fit_params):
         return self
     
-    def transform(self, X):
+    def transform(self, X, **transform_params):
+        print(f"{self.__class__.__name__} transforming X of shape {X.shape}.") 
         categorical = list(X.select_dtypes(include=["object"]).columns)
         # Create imputer object
         imputer = SimpleImputer(strategy="most_frequent")
@@ -173,78 +232,25 @@ class DiscretePreprocessor(BaseEstimator, TransformerMixin):
     def __init__(self):
         pass
 
-    def fit(self, X, y=None):
-        return self
-    
-    def transform(self, X):
-        discrete = list(X.select_dtypes(include=["int"]).columns)
-        # Create imputer and scaler objects
-        imputer = SimpleImputer(strategy="most_frequent")
-        scaler = StandardScaler()        
-        
-        # Perform imputation of categorical variables to most frequent
-        X[discrete] = imputer.fit_transform(X[discrete])
-        X[discrete] = scaler.fit_transform(X[discrete])
-        
-        return X        
-        
-def build_preprocessor(X, y=None):
-    """Builds the data processing component of the pipeline."""
-    continuous = list(X.select_dtypes(include=["float64"]).columns)
-    categorical = list(X.select_dtypes(include=["object"]).columns)
-    discrete = list(X.select_dtypes(include=["int"]).columns)
-    features = list(X.columns)
-
-    continuous_pipeline = make_pipeline(
-        IterativeImputer(),
-        PowerTransformer(method="yeo-johnson", standardize=True)
-    )
-
-    categorical_pipeline = make_pipeline(
-        IterativeImputer(),
-        OneHotEncoder()
-    )
-
-    discrete_pipeline = make_pipeline(
-        IterativeImputer(),
-        StandardScaler()
-    )
-
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('continuous', continuous_pipeline, continuous),
-            ('categorical', categorical_pipeline, categorical),
-            ('discrete', discrete_pipeline, discrete)
-        ]
-    )
-    return preprocessor
-# =========================================================================== #
-#                          5. FEATURE ENGINEERING                             #
-# =========================================================================== #    
-class FeatureEngineer(BaseEstimator, TransformerMixin):
-    def __init__(self, ordinal_map=ordinal_map):
-        self._ordinal_map = ordinal_map
-
     def fit(self, X, y=None, **fit_params):
         return self
     
     def transform(self, X, **transform_params):
-        """Creation, removal, and encoding of features."""
-        # Add an age feature and remove year built
-        X["Age"] = X["Year_Sold"] - X["Year_Built"]
-        X["Age"].fillna(X["Age"].median())
-        X.drop(columns=["Year_Built"], inplace=True)
+        print(f"{self.__class__.__name__} transforming X of shape {X.shape}.") 
+        # Create imputer and scaler objects
+        imputer = SimpleImputer(strategy="most_frequent")
+        scaler = StandardScaler()        
+        
+        # Perform imputation of discrete variables to most frequent
+        X[discrete] = imputer.fit_transform(X[discrete])
+        X[discrete] = scaler.fit_transform(X[discrete])
+        
+        return X        
 
-        # Remove longitude and latitude
-        X = X.drop(columns=["Latitude", "Longitude"])
 
-        ## Encode ordinal features
-        for variable, mappings in self._ordinal_map:
-            for k,v in mappings.items():
-                X[variable].replace({k:v}, inplace=True)    
-
-        return X
-# --------------------------------------------------------------------------- #
+# =========================================================================== #
+#                            7. ENCODERS                                      #
+# =========================================================================== #
 class OrdinalEncoder(BaseEstimator, TransformerMixin):
     def __init__(self, ordinal_map=ordinal_map):
         self._ordinal_map = ordinal_map
@@ -253,96 +259,164 @@ class OrdinalEncoder(BaseEstimator, TransformerMixin):
         return self
     
     def transform(self, X, **transform_params):
-        for variable, mappings in self._ordinal_map:
+        print(f"{self.__class__.__name__} transforming X of shape {X.shape}.") 
+        for variable, mappings in self._ordinal_map.items():
             for k,v in mappings.items():
-                X[variable].replace({k:v}, inplace=True)    
+                X[variable].replace({k:v}, inplace=True)       
 
-        return X        
+        # Scale data as continuous 
+        scaler = StandardScaler()        
+        X[ordinal] = scaler.fit_transform(X[ordinal])                     
+
+        return X
 # --------------------------------------------------------------------------- #
 class NominalEncoder(BaseEstimator, TransformerMixin):
     
-    def __init__(self, nominals=nominals):
-        self._nominals = nominals
+    def __init__(self, nominal=nominal):
+        self._nominal = nominal
 
     def fit(self, X, y=None, **fit_params):
         return self
     
     def transform(self, X, **transform_params):
+        print(f"{self.__class__.__name__} transforming X of shape {X.shape}.") 
         """Converting nominal variables to one-hot representation."""
         n = X.shape[0]
-        # Extract nominals from X
-        nominals = pd.Series(self._nominals)
+        # Extract nominal from X
+        nominal = pd.Series(self._nominal)
         features = X.columns
-        nominal_features = features[features.isin(nominals)]
-        X_nominals = X[nominal_features]   
+        nominal_features = features[features.isin(nominal)]
+        X_nominal = X[nominal_features]   
         X.drop(nominal_features, axis=1, inplace=True)    
         n_other_features = X.shape[1]
 
-        # Encode nominals and store in dataframe with feature names
+        # Encode nominal and store in dataframe with feature names
         enc = OneHotEncoder()
-        X_nominals = enc.fit_transform(X_nominals).toarray()
-        X_nominals = pd.DataFrame(data=X_nominals)
-        X_nominals.columns = enc.get_feature_names()
+        X_nominal = enc.fit_transform(X_nominal).toarray()
+        X_nominal = pd.DataFrame(data=X_nominal)
+        X_nominal.columns = enc.get_feature_names()
 
-        # Concatenate X with X_nominals and validate    
-        X = pd.concat([X, X_nominals], axis=1)
+        # Concatenate X with X_nominal and validate    
+        X = pd.concat([X, X_nominal], axis=1)
         expected_shape = (n,n_other_features+n_total_feature_levels)
         assert(X.shape == expected_shape), "Error in Encode Nominal. X shape doesn't match expected."
 
         return X
-
 # =========================================================================== #
-#                           6. PIPELINE RFE                                   #
-# =========================================================================== #   
-class PipelineRFE(Pipeline):
-    # Source: https://ramhiser.com/post/2018-03-25-feature-selection-with-scikit-learn-pipeline/
-    def fit(self, X, y=None, **fit_params):
-        super(PipelineRFE, self).fit(X, y, **fit_params)
-        self.feature_importances_ = self.steps[-1][-1].feature_importances_
+#                          8. TARGET TRANSFORMER                              #
+# =========================================================================== #
+class TargetTransformer(BaseEstimator, TransformerMixin):
+    
+    def __init__(self):
+        pass
+
+    def fit(self,y, **fit_params):
         return self
+    
+    def transform(self, y, **transform_params):
+        print(f"{self.__class__.__name__} transforming y of shape {y.shape}.") 
+        return np.log(y)
 
+    def inverse_transform(self, y, **transform_params):
+        return np.exp(y)
 # =========================================================================== #
-#                             7. SCORING                                      #
+#                          9. DATA PREPROCESSOR                               #
 # =========================================================================== #   
-def rmse(y_true, y_pred):
-    return np.sqrt(np.mean((y_true-y_pred)**2))
-rmse = make_scorer(rmse, greater_is_better=False)    
-# =========================================================================== #
-#                         8. FEATURE SELECTION                                #
-# =========================================================================== #   
-class DataPipeline(BaseEstimator, TransformerMixin):
-    """Performs feature selection using Recursive Feature Elimination with CV."""
-    def __init__(self, estimator, cv=5, scoring=rmse, min_features=1):
-        self._estimator = estimator
-        self._cv = cv
-        self._scoring = scoring
-        self._min_features = min_features
-        self._feature_selector = None
+class DataPreProcessor:
+    
+    def __init__(self):
+        pass
 
     def fit(self, X, y=None, **fit_params):
         return self
     
     def transform(self, X, y, **transform_params):
-        # Define the pipeline for RFECV
-        preprocessor = build_preprocessor(X)
-        steps = [("preprocessor", preprocessor),
-                 ("features", FeatureEngineer()),
-                 ("nominal", NominalEncoder()),
-                 ("ordinal", OrdinalEncoder()),
-                 ("estimator", self._estimator)]
-        pipe = PipelineRFE(steps=steps)
+        """Screens, preprocesses and transforms the data."""
+        # Screen data of outliers and non-informative features
+        screener = DataScreener()
+        screener.fit(X, y)
+        X, y = screener.transform(X, y)
 
-        # Initialize the RFECV object
-        self._feature_selector = RFECV(pipe, cv=self._cv, step=1, scoring=self._scoring)
+        # Execute feature preprocessors
+        preprocessors = [ContinuousPreprocessor(), 
+                         CategoricalPreprocessor(), DiscretePreprocessor(),
+                         OrdinalEncoder()]        
+        for preprocessor in preprocessors:
+            x4mr = preprocessor
+            x4mr.fit(X, y)
+            X = x4mr.transform(X)
 
-        # Fit RFECV
-        print(f"Inside DataPipeline transform and y shape is {y.shape}")
-        self._feature_selector.fit(X,y)
+        # Transform Target
+        x4mr = TargetTransformer()
+        x4mr.fit(y)                    
+        y = x4mr.transform(y)
 
-        # Get selected features
-        feature_names = X.columns
-        self.selected_features = feature_names[self._feature_selector.support_].tolist()
-        return X[self.selected_features]
+        return X, y
+
+# =========================================================================== #
+#                             10. SCORING                                     #
+# =========================================================================== #   
+def rmse(y_true, y_pred):
+    return np.sqrt(np.mean((y_true-y_pred)**2))
+rmse = make_scorer(rmse, greater_is_better=False)    
+# =========================================================================== #
+#                         11. FEATURE SELECTION                                #
+# =========================================================================== #   
+class FeatureSelector(BaseEstimator, TransformerMixin):
+    """Performs feature selection using Recursive Feature Elimination with CV."""
+    def __init__(self, estimator, scoring=rmse, k=10, feature_type='numeric'):
+        self._estimator = estimator
+        self._scoring = scoring
+        self._k = k
+        self._feature_type = feature_type
+        self._selector = None
+
+        self._kbest_results_filename = "../reports/kbest_"
+        self._rfecv_results_filename = "../reports/rfecv_"
+        self._kbest_index = 0
+        self._rfecv_index = 0
+
+    def fit(self, X, y=None, **fit_params):
+        return self
+
+    def set_filename(self, filename_stub):
+        x = datetime.datetime.now()
+        month = x.strftime("%B")
+        day = x.strftime("%d")
+        year = x.strftime("%Y")
+        return filename_stub + month + "-" + day + \
+            "-" + year + "_" + str(self._kbest_index) + ".joblib"
+
+        
+    def _save_kbest_data(self):
+        if os.path.exists(self._kbest_results_filename):
+            results = pd.read_csv(self._kbest_results_filename)
+            d = {''}
+
+
+    def _transform_rfe(self, X, y):
+        """ Performs feature selection for continuous features."""
+        X_numeric = X[numeric]
+        self._selector = RFECV(estimator=self._estimator,min_features_to_select=1,
+                       step=1, n_jobs=2)
+        self._selector.fit(X_numeric,y)
+        X[numeric] = X[self._selector.support_]
+        return X
+
+    def _transform_kbest(self, X, y):
+        """Performs feature selection for categorical variables."""
+        X_nominal = X[nominal]
+        self._selector = SelectKBest(score_func=mutual_info_regression, k=self._k)
+        X[nominal] = self._selector.fit_transform(X_nominal,y)
+        return X
+
+    def transform(self, X, y, **transform_params):
+        # Engage the selector
+        if (self._feature_type == 'numeric'):
+            return self._transform_rfe(X,y)
+        else:
+            return self._transform_kbest(X,y)
+        
 
     def plot(self):
         sns.set_style("whitegrid")
@@ -358,10 +432,8 @@ class DataPipeline(BaseEstimator, TransformerMixin):
         plt.tight_layout()
         plt.show()
 
-
-
 # =========================================================================== #
-#                              10. ESTIMATORS                                 #
+#                              12. ESTIMATORS                                 #
 # =========================================================================== #
 regressors = {}
 regressors.update({"Linear Regression": LinearRegression()})
@@ -379,7 +451,7 @@ ensembles.update({"Histogram Gradient Boosting": HistGradientBoostingRegressor()
 
 
 # =========================================================================== #
-#                          11. HYPERPARAMETERS                                #
+#                          13. HYPERPARAMETERS                                #
 # =========================================================================== #
 # Parameter Grid
 regressor_parameters = {}
@@ -433,7 +505,7 @@ ensemble_parameters.update({"Histogram Gradient Boosting": {
         "estimator__max_depth": [2,3,4,5,6],        
         "estimator__min_samples_leaf": [0.005, 0.01, 0.05, 0.10]}})                                        
 # =========================================================================== #
-#                           12. MODEL EVALUATION                              #
+#                           14. MODEL EVALUATION                              #
 # =========================================================================== #
 class ModelEvaluator:
     def __init__(self, data_pipeline, estimator, parameters):
@@ -456,42 +528,98 @@ class ModelEvaluator:
         self.best_params = gscv.best_params_
         self.best_score = gscv.best_score_
 
+# =========================================================================== #
+#                           15. PERSISTENCE                                   #
+# =========================================================================== #
+class Persistence:
+    """Manages persistence of models created in the pipeline."""
+    def __init__(self):
+        self._director = "../models/"                
+        self._index_filename = "../models/index.joblib"
+        self._file_ext = ".joblib"        
+
+    def _load_index(self):
+        if os.path.exists(self._index_filename):
+            with open(self._index_filename, 'rb') as index_file:
+                index = pickle.load(index_file)
+        else:
+            index= {}
+        return index
+
+    def _save_index(self, index):
+        with open(self._index_filename, "wb") as index_file:
+            pickle.dump(index, index_file, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def _get_model_index(self, name):
+        """Returns the next index for a given estimator by its name."""        
+        indexes = self._load_index()
+        if name in indexes.keys():
+            index = indexes[name]
+            indexes[name] += 1
+            self._save_index(indexes)
+        else:
+            indexes[name] = 1
+            self._save_index(indexes)
+            index = 0
+        return index
+
+    def _get_filename(self, name, day, index, month='March'):
+        filenames = []
+        search_string = self._director + name + "_" + str(month) + \
+                    "-" + str(day) + "-" + "2021" + \
+                        "_" + str(index) + self._file_ext
+
+        for filename in glob.glob(search_string):
+            filenames.append(filename)
+
+        assert(len(filenames) != 0), "No files match search criteria"
+        assert(len(filenames) == 1), "Multiple files match criteria"
+        return filenames[0]
+
+    def _set_filename(self, estimator):
+        """Creates a filename for an estimator."""
+        cdate = datetime.datetime.now()
+        month = cdate.strftime("%B")
+        day = cdate.strftime("%d")
+        year = cdate.strftime("%Y")
+        name = estimator.__class__.__name__
+        index = self._get_model_index(name)
+        filename = self._director + name + "_" + str(month) + \
+                    "-" + str(day) + "-" + str(year) + \
+                        "_" + str(index) +  self._file_ext
+        return filename
+
+    def load(self, name, day, index, month='March'):
+        """Loads an estimator from file."""
+        filename = self._get_filename(name, day, index, month)
+        if os.path.exists(filename):
+            with open(filename, "rb") as handler:
+                estimator = pickle.load(handler)
+            return estimator
+        else:
+            print(f"File {filename} does not exist.")
+
+
+    def dump(self, estimator):
+        filename = self._set_filename(estimator)
+        with open(filename, "wb") as handler:
+            pickle.dump(estimator,handler, protocol=pickle.HIGHEST_PROTOCOL)
+
+
 # --------------------------------------------------------------------------- #
 #                                    MAIN                                     #
 # --------------------------------------------------------------------------- #    
 def main():
     # Obtain the data
     io = AmesDataIO()
-    X, y = io.get_train()
-    print(X.shape)
-    print(y.shape)
+    X, y = io.get_train()   
+       
 
-    best_params = {}
-    best_scores = {}
-
-    # Train and evaluate regression models
-    for name, estimator in regressors.items():
-        # Instantiate, run and plot data pipeline
-        data_pipeline = DataPipeline(estimator)
-        data_pipeline.fit(X,y)
-        X = data_pipeline.transform(X,y)
-        data_pipeline.plot()
-
-        # Obtain GridSearchCV parameters for estimator
-        parameters = regressor_parameters[name]
-
-        # Instantiate Model evaluator and perform tuning and evaluation
-        evaluator = ModelEvaluator(data_pipeline, estimator, parameters)
-        evaluator.fit(X,y)
-
-        # Store parameters and scores 
-        best_params[name] = evaluator.best_params
-        best_scores[name] = evaluator.best_score
-
-        # Print scores 
-        print(f"Best score for {name}: {evaluator.best_score}")
-
-
+    # Preprocess Data
+    # preprocessor = DataPreProcessor()
+    # preprocessor.fit(X, y)
+    # X, y = preprocessor.transform(X, y)
+    # print(X.head())
 
 if __name__ == "__main__":
     main()
