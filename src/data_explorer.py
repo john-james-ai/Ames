@@ -20,11 +20,19 @@
 import os
 import pandas as pd
 import numpy as np
+import scipy.stats as stats
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.preprocessing import OneHotEncoder
+import statsmodels.api as sm
+from statsmodels.formula.api import ols
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 from tabulate import tabulate
 import pprint
 
-from globals import data_paths, categoricals
-from data import Ames
+from globals import nominal
+from data_processor import AmesData
+from tabulate import tabulate
+
 # --------------------------------------------------------------------------- #
 def categorical_metadata(X):
     summary = pd.DataFrame()
@@ -71,11 +79,106 @@ def create_nominal_map():
     pp = pprint.PrettyPrinter(compact=True, width=100)
     pp.pprint(list(nominals))
 
+
+
+
+
+# =========================================================================== #
+#                        CATEGORICAL FEATURE SELECTION                        #
+# =========================================================================== #
+def create_formula_univariate(feature):
+    formula = "Sale_Price ~ C(" + feature + ")"
+    return formula
+
+def create_formula_multivariate(features=nominal):
+    formula = "Sale_Price ~ "
+    n_features = len(nominal)
+    for i, feature in enumerate(nominal):
+        formula += "C(" + feature + ")"
+        if i < n_features - 1:
+            formula += " + "    
+    return formula
+class Catalyst:
+    """Categorical feature analysis."""
+    def __init__(self, nominal=nominal):
+        self._nominal = nominal
+        self._anova = pd.DataFrame()
+        self._importance = pd.DataFrame()
+        self._importance_orig = pd.DataFrame()
+        self._coef = pd.DataFrame()
+
+    def anova(self, X, y):
+        """Performs Anova testing on nominal categorical features."""
+        X["Sale_Price"] = np.log(y["Sale_Price"].values)
+        for feature in self._nominal:
+            formula = create_formula_univariate(feature)
+            model = ols(formula, data=X).fit()
+            anova_table = sm.stats.anova_lm(model, typ=3)
+            d = {"Feature": feature, "F": anova_table["F"][0], "PR(>F)": anova_table["PR(>F)"][0]}
+            df = pd.DataFrame(data=d, index=[0])
+            self._anova = pd.concat((self._anova, df), axis=0)
+            
+    def regression(self, X, y):
+        """Performs OLS on all predictors and presents coefficients."""
+        X["Sale_Price"] = np.log(y["Sale_Price"].values)
+        formula = create_formula_multivariate()
+        # X = pd.get_dummies(X[nominal])
+        # model = sm.OLS(np.asarray(y["Sale_Price"].values), X)
+        model = ols(formula, data=X).fit()        
+        print(model.summary())
+
+    def multicollinearity(self, X, y, threshold=5):
+        """Recursively eliminates variables with highest VIF below threshold."""        
+        X = pd.get_dummies(X[nominal])
+        def calc_vif(X):
+            vif = pd.DataFrame()
+            vif["Feature"] = X.columns
+            vif["VIF"] = [variance_inflation_factor(np.asarray(X.values), i) for i in range(X.shape[1])]
+            return vif
+        vif = calc_vif(X)
+        while(max(vif["VIF"]) > threshold):
+            vif = vif.sort_values(by="VIF", ascending=False)
+            X = X.drop([vif["Feature"][0]], axis=1)
+            vif = calc_vif(X)
+        print(tabulate(vif, headers="keys", showindex=False))    
+
+    def importance(self, X, y):
+        # Prepare Data
+        y["Sale_Price"] = np.log(y["Sale_Price"].values)
+        X = X[nominal]        
+        X = pd.get_dummies(X)
+        groups = onehotmap(X.columns, nominal) # Returns original column for each dummy
+
+        # Instantiate the decision tree and store results in dataframe
+        tree = DecisionTreeRegressor().fit(X, y)        
+        d = {"Original":  groups, "Feature": X.columns, "Importance": tree.feature_importances_}
+        self._importance = pd.DataFrame(data=d)
+        
+        # Aggregate, summarize and sort mean importance by original column name
+        self._importance_orig = self._importance.groupby("Original").mean().reset_index()        
+        self._importance_orig.sort_values(by=["Importance"], inplace=True, ascending=False)
+        print(tabulate(self._importance_orig, headers="keys", showindex=False))        
+
+    def selection(self):
+
+
+
+
+    def print(self, what="anova"):
+        if what == "anova":
+            print(tabulate(self._anova, headers="keys", showindex=False))
+
+
+
+
 def main():
-    # ames = Ames()
-    # X, y = ames.read()   
-    # categorical_metadata(X)
-    create_nominal_map()
+
+    data = AmesData()
+    X, y = data.get()
+
+    cat = Catalyst()
+    cat.importance(X,y)
+    
 
 if __name__ == "__main__":
     main()
