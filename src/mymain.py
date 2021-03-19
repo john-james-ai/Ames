@@ -61,7 +61,7 @@ import matplotlib.pyplot as plt
 from tabulate import tabulate
 
 # Utilities
-from utils import Notify, Persistence
+from utils import Notify, Persist
 
 
 if __name__ == "__main__":

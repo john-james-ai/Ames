@@ -71,7 +71,7 @@ from data_processor import ContinuousPreprocessor, DiscretePreprocessor, Categor
 from data_processor import DataScreener, TargetTransformer
 from feature_selection import FeatureSelector
 from metrics import rmse
-from utils import notify, Persistence
+from utils import notify, Persist
 
 # =========================================================================== #
 #                                ESTIMATORS                                   #

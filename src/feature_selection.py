@@ -54,7 +54,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 # Utilities
-from utils import Notify, Persistence
+from utils import Notify, Persist
 
 # Global Variables
 from globals import random_state, discrete, continuous, numeric, n_nominal_levels
@@ -171,7 +171,7 @@ class ForwardSelector(BaseEstimator, TransformerMixin):
         X_nominal = X[ranker.importance_["Original"][0:num_features+1]]
         self.nominal_features_ = ranker.importance_["Original"][0:num_features+1]
         print(f"Nominal Features Selected: {self.nominal_features}")
-        
+
 
         # Drop nominal features and concatenate selected features
         X_new = X.drop(self._nominal, axis=1)

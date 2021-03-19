@@ -16,30 +16,24 @@
 # License : BSD                                                               #
 # Copyright (c) 2021 nov8.ai                                                  #
 # =========================================================================== #
+#%%
 from abc import ABC, abstractmethod
 import datetime
 import glob
 from joblib import dump, load
 import os
+import numpy as np
+import pandas as pd
 import pickle
-# --------------------------------------------------------------------------- #
-class Notify:
-    def __init__(self, verbose=True):
-        self._verbose = verbose
+from sklearn.linear_model import LinearRegression
 
-    def entering(self, classname, methodname=None):
-        if self._verbose:
-            print(f">>>>Entering {classname}: {methodname}")
-
-    def leaving(self, classname, methodname=None):
-        if self._verbose:
-            print(f"<<<<Leaving {classname}: {methodname}")
-notify = Notify(verbose=True)
-# --------------------------------------------------------------------------- #
+# =========================================================================== #
+#                              PERSIST                                        #
+# =========================================================================== #
 class Persist(ABC):
     """Base class for classes that manage model and model metadata  persistence."""
-    def __init__(self):
-        self._directory = "../models/"
+    def __init__(self, directory="../models/"):
+        self._directory = directory
         self._index_filename = "index.npy"
         self._file_ext = ".joblib"        
 
@@ -52,60 +46,170 @@ class Persist(ABC):
         new_id = np.random.randint(1000,9999)
         while (new_id in ids):
             new_id = np.random.randint(1000,9999)
-        ids.append(new_id)
+        np.append(ids, new_id)
         return new_id
 
     @abstractmethod
     def _get_item_name(self, item):
         pass
 
+    @abstractmethod
+    def _get_file_ext(self, item):
+        pass
+
     def search(self, index):
+        """Returns the filename matching the index."""
+        filenames = []
+        search_string = self._directory + "*" + index + "*"
+
+        for name in glob.glob(search_string):
+            filenames.append(name)
+        if len(filenames) == 0:
+            print("No files matching index were found.")
+        elif len(filenames) == 1:
+            return filenames[0]
+        else:
+            return filenames
         
 
-    def _create_filepath(self, item, descriptor):
+    def _create_filepath(self, item, descriptor=None):
         """Creates a filename for an item."""
-        index = self._gen_id()
         cdate = datetime.datetime.now()
-        month = cdate.strftime("%B")
-        day = cdate.strftime("%d")
-        year = cdate.strftime("%Y")
-        name = _get_item_name()
-        filename = self._directory    + name + "_" + descriptor + "_" + str(month) + \
-                    "-" + str(day) + "-" + str(year) + \
-                        "_" + str(index) +  self._file_ext
+        name = (self._get_item_name(item) + "_") if self._get_item_name(item) else ""
+        descriptor = (descriptor + "_") if descriptor else ""
+        date = cdate.strftime("%B") + "-" + str(cdate.strftime("%d")) + "-" + str(cdate.strftime("%Y")) + "_"
+        index = str(self._gen_id()) 
+        ext = self._get_file_ext(item)        
+        filename = self._directory + name + descriptor + date + index + ext
         return filename
 
     @abstractmethod
-    def load(self, index):
+    def load(self, filename):
         pass
 
     @abstractmethod
-    def dump(self, object, descriptor=None):
-        filename = self._create_filepath(item, )
+    def dump(self, item, descriptor=None):
+        pass
 
+# =========================================================================== #
+#                          PERSIST ESTIMATOR                                  #
+# =========================================================================== #
+class PersistEstimator(Persist):
+    """ Responsible for serializing and deserializing estimators."""
+    def __init__(self, directory="../models/"):
+        super().__init__(directory)
 
+    def _get_item_name(self, item):
+        return item.__class__.__name__    
 
-    def load(self, name, day, index, month='March'):
-        """Loads an item from file."""
-        filename = self._get_filename(name, day, index, month)
-        if os.path.exists(filename):
-            with open(filename, "rb") as handler:
-                item = pickle.load(handler)
-            return item
-        else:
-            print(f"File {filename} does not exist.")
+    def _get_file_ext(self, item):
+        return ".joblib"
 
+    def load(self, filename):
+        return load(filename)
 
-    def dump(self, item, descriptor):
-        filename = self._set_filename(item, descriptor)
-        with open(filename, "wb") as handler:
-            pickle.dump(item,handler, protocol=pickle.HIGHEST_PROTOCOL)
+    def dump(self, item, descriptor=None):
+        filename = self._create_filepath(item, descriptor)
+        dump(item, filename)
+
+# =========================================================================== #
+#                          PERSIST NUMPY                                      #
+# =========================================================================== #
+class PersistNumpy(Persist):
+    """ Responsible for persisting arrays."""
+    def __init__(self, directory="../models/"):
+        super().__init__(directory)
+
+    def _get_item_name(self, item):
+        return ""
+
+    def _get_file_ext(self, item):
+        return ".npy"
+
+    def load(self, filename):
+        return np.load(filename)
+
+    def dump(self, item, descriptor=None):
+        filename = self._create_filepath(item, descriptor)
+        np.save(filename, item)        
+
+# =========================================================================== #
+#                        PERSIST DATAFRAME                                    #
+# =========================================================================== #
+class PersistDataFrame(Persist):
+    """ Responsible for persisting dataframes."""
+    def __init__(self, directory="../models/"):
+        super().__init__(directory)
+
+    def _get_item_name(self, item):
+        return ""
+
+    def _get_file_ext(self, item):
+        return ".pkl"
+
+    def load(self, filename):
+        return pd.read_pickle(filename)
+
+    def dump(self, item, descriptor=None):
+        filename = self._create_filepath(item, descriptor)
+        item.to_pickle(filename)   
+    
 # --------------------------------------------------------------------------- #
 def onehotmap(features, nominal):
     groups = []
     for feature in features:        
         for col in nominal:
             if col in feature:
-                groups.append(col)
+                np.append(groups,col)
                 break
     return groups            
+# --------------------------------------------------------------------------- #
+class Notify:
+    def __init__(self, verbose=True):
+        self._verbose = verbose
+
+    def entering(self, classname, methodname=None):
+        if self._verbose:
+            print(f">>>>Entering {classname}: {methodname}")
+
+    def leaving(self, classname, methodname=None):
+        if self._verbose:
+            print(f"<<<<Leaving {classname}: {methodname}")
+notify = Notify(verbose=True)    
+
+# --------------------------------------------------------------------------- #
+def test():
+    from data import AmesData
+    data = AmesData()
+    X, y = data.get()
+    X = X[["Year_Built", "Gr_Liv_Area"]]
+
+    directory = "../tests/"
+    
+    # Test Estimator
+    estimator = LinearRegression().fit(X,y)
+    persist = PersistEstimator(directory)
+    persist.dump(estimator, "test_estimator")       
+    filename = persist.search("5611")
+    assert(persist.load(filename).__class__.__name__ == "LinearRegression"), "Lost something with PersistEstimator"
+
+
+    # Numpy array 
+    y = np.array(y.values)
+    persist = PersistNumpy(directory)
+    persist.dump(y,  "test_numpy")
+    filename = persist.search("9434")
+    assert(persist.load(filename).all() == y.all()), "Numpy Persist ain't workin'"
+
+
+    # DataFrame
+    persist = PersistDataFrame(directory)
+    persist.dump(X,"test_dataframe")
+    filename = persist.search("9634")
+    assert(persist.load(filename).shape == X.shape), "Persist DataFrame ain't workin'"
+    
+
+
+if __name__ == "__main__":    
+    test()
+#%%
