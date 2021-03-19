@@ -31,7 +31,7 @@ from utils import notify
 class AmesData:
     """ Obtains processed data if exists, processes raw data otherwise."""
     def __init__(self):
-        self._train_directory = "../data/train/"
+        self._train_directory = "../data/raw/"
         self._processed_directory = "../data/processed/"
         self._X_filename = "X_train.csv"
         self._y_filename = "y_train.csv"

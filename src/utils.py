@@ -153,7 +153,29 @@ class PersistDataFrame(Persist):
     def dump(self, item, descriptor=None):
         filename = self._create_filepath(item, descriptor)
         item.to_pickle(filename)   
-    
+
+# =========================================================================== #
+#                        PERSIST DICTIONARY                                   #
+# =========================================================================== #
+class PersistDictionary(Persist):
+    """ Responsible for persisting dictionary."""
+    def __init__(self, directory="../models/"):
+        super().__init__(directory)
+
+    def _get_item_name(self, item):
+        return ""  
+
+    def _get_file_ext(self, item):
+        return ".joblib"
+
+    def load(self, filename):
+        return load(filename)
+
+    def dump(self, item, descriptor=None):
+        filename = self._create_filepath(item, descriptor)
+        dump(item, filename)
+ 
+        
 # --------------------------------------------------------------------------- #
 def onehotmap(features, nominal):
     groups = []

@@ -17,7 +17,17 @@
 # Copyright (c) 2021 nov8.ai                                                  #
 # =========================================================================== #
 #%%
-random_state = 9876
+# Directory paths
+directories = {
+    "data": {
+        "raw": "../data/raw/",
+        "processed": "../data/processed/",
+        "training": "../data/training/"
+    },
+    "features": "../features/",
+    "models": "../models/"
+}
+# Features
 discrete =  ["Year_Built","Year_Remod_Add","Bsmt_Full_Bath","Bsmt_Half_Bath",
     "Full_Bath","Half_Bath","Bedroom_AbvGr","Kitchen_AbvGr","TotRms_AbvGrd",
     "Fireplaces","Garage_Cars","Mo_Sold","Year_Sold","Age"]
@@ -68,3 +78,4 @@ ordinal_map = {'BsmtFin_Type_1': {'ALQ': 5, 'BLQ': 4, 'GLQ': 6, 'LwQ': 2, 'No_Ba
  'Paved_Drive': {'Dirt_Gravel': 0, 'Partial_Pavement': 1, 'Paved': 2},
  'Pool_QC': {'Excellent': 4, 'Fair': 1, 'Good': 3, 'No_Pool': 0, 'Typical': 2},
  'Utilities': {'AllPub': 2, 'NoSeWa': 0, 'NoSewr': 1}}
+# %%

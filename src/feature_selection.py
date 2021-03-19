@@ -49,23 +49,49 @@ from sklearn.pipeline import make_pipeline, Pipeline, FeatureUnion
 from sklearn.model_selection import GridSearchCV
 from sklearn.tree import DecisionTreeRegressor
 
+# Models 
+from models import regressors, ensembles 
+
 # Visualizing data
 import seaborn as sns
 import matplotlib.pyplot as plt
+from tabulate import tabulate
 
 # Utilities
-from utils import Notify, Persist
+from utils import Notify, PersistEstimator, PersistNumpy, PersistDataFrame, PersistDictionary
 
 # Global Variables
 from globals import random_state, discrete, continuous, numeric, n_nominal_levels
-from globals import nominal, ordinal, ordinal_map
+from globals import nominal, ordinal, ordinal_map, directories
 from metrics import rmse
 from utils import onehotmap, notify
+# =========================================================================== #
+#                            COLUMN SELECTOR                                  #
+# =========================================================================== #  
+class ColumnSelector(BaseEstimator, TransformerMixin):
+    """Returns all columns of the designated type."""
+    def __init__(self, columns=nominal):
+        self._columns = columns
+
+    def fit(self, X, y, **fit_params):
+        return self
+
+    def transform(self, X, **transform_params):        
+        return X[self._columns]
+
+# =========================================================================== #
+#             PIPELINE RECURSIVE FEATURE ELIMINATION WRAPPER                  #
+# =========================================================================== #     
+class PipelineRFE(Pipeline):
+    def fit(self, X, y=None, **fit_params):
+        super(PipelineRFE, self).fit(self, X, y=None, **fit_params)
+        self.feature_importances_ = self.steps[-1][-1].feature_importances_
+
  
 # =========================================================================== #
 #                        NUMERIC FEATURE SELECTION                            #
 # =========================================================================== #   
-class SelectNumeric(BaseEstimator, TransformerMixin):
+class NumericSelector(BaseEstimator, TransformerMixin):
     """Performs numeric feature selection using RFECV."""
     def __init__(self, estimator, scoring=rmse, numeric=numeric):
         self._estimator = estimator
@@ -76,70 +102,99 @@ class SelectNumeric(BaseEstimator, TransformerMixin):
         """ Performs feature selection for numeric features."""
         notify.entering(__class__.__name__, "fit")
 
-        X_new = X[self._numeric]
-
         # Run RFECV on chosen estimator and fit the model
-        selector = RFECV(estimator=self._estimator,min_features_to_select=1,
+        self.selector_ = RFECV(estimator=self._estimator,min_features_to_select=1,
                        step=1, n_jobs=2, scoring=self._scoring)
-        selector.fit(X_new, y)
+        self.selector_.fit(X, y)
 
         # Extract selected numeric features
-        self.numeric_features_ = self._numeric[selector.support_]
-        print(f"Numeric Features Selected: {self.numeric_features_}")
-
-        # Drop numeric features and concatenate (add) selected features to the design matrix
-        X_new = X.drop(self._numeric, axis=1)
-        X_new = pd.concat((X_new, X[self.numeric_features_]), axis=1)
+        self.feature_names_ = X.columns
+        self.features_selected_ = self._numeric[self.selector_.support_].tolist()
+        print(f"Model: {self._estimator.__class__.__name__} Numeric Features Selected: {self.features_selected_}")
 
         # Save the estimator
-        persistence=Persistence()
-        persistence.dump(selector)
+        persistence=PersistEstimator()
+        persistence.dump(self.selector_, self._estimator.__class__.__name__)
         
         notify.leaving(__class__.__name__, "fit")
-        return X_new
+        return self
 
     def transform(self, X, **transform_params):
-        return X[self.numeric_features_]
+        return X[self.features_selected_]
+
+    def plot()
+        sns.set_style("whitegrid")
+        fig, ax = plt.subplots(figsize=(10,12))        
+
+        # Fit performance curve
+        performance_curve = {"Number of Features": list(range(1, len(self.feature_names_)+1)),
+                             "Root Mean Squared Error": self.selector_.grid_scores_}
+        performance_curve = pd.DataFrame(performance_curve)
+
+        # Create plot objects
+        sns.lineplot(x="Number of Features", y="Root Mean Squared Error", data=performance_curve,
+                     ax=ax)
+        sns.regplot(x=performance_curve["Number of Features"],y=performance_curve["Root Mean Squared Error"],
+                    ax=ax)
+        
+        # Title and axis labels
+        plt.xlabel("Number of Features")
+        plt.ylabel("Root Mean Squared Error")
+        plt.title("Recursive Feature Elimination")
+        plt.tight_layout()
+        plt.show()            
+
+
 
 # =========================================================================== #
 #                           FEATURE IMPORTANCE                                #
 # =========================================================================== #   
-class FeatureRanker(BaseEstimator, TransformerMixin):
+class FeatureImportance(BaseEstimator, TransformerMixin):
     """Returns a list of features in descending order of importance."""
     def __init__(self, nominal=nominal):
         self._nominal = nominal
 
     def fit(self, X, y, **fit_params):
         notify.entering(__class__.__name__, "fit")
-        # Prepare Data
-        X = X[self._nominal]        
-        X = pd.get_dummies(X)
-        groups = onehotmap(X.columns, self._nominal) # Returns original column for each dummy variable
+        # Prepare Data              
+        X = pd.get_dummies(X, drop_first=True)
+        self.features_ = onehotmap(X.columns, self._nominal) # Returns original column for each dummy variable
 
         # Instantiate the decision tree and store results in dataframe
         tree = DecisionTreeRegressor().fit(X, y)        
-        d = {"Original":  groups, "Feature": X.columns, "Importance": tree.feature_importances_}
+        d = {"Feature":  self.features_, "Level": X.columns, "Importance": tree.feature_importances_}
         df = pd.DataFrame(data=d)
         
         # Aggregate, summarize and sort mean importance by original column name
-        self.importance_ = df.groupby("Original").mean().reset_index()        
+        self.importance_ = df.groupby("Feature").mean().reset_index()        
         self.importance_.sort_values(by=["Importance"], inplace=True, ascending=False)
 
         # Save the estimator
-        persistence=Persistence()
-        persistence.dump(tree)
+        persistence=PersistEstimator()
+        persistence.dump(tree, self.__class__.__name__)
 
         notify.leaving(__class__.__name__, "fit")    
+        return self
 
     def transform(self, X, **transform_params):
-        return X[self.importance_]
+        return self.importance_
+
+    def plot()
+        sns.set_style("whitegrid")
+        fig, ax = plt.subplots(figsize=(10,12))        
+        ax = sns.lineplot(x="Importance", y="Feature", data=self.importance_)
+        plt.xlabel("Feature Importance")
+        plt.ylabel("Feature")
+        plt.title("Feature Importance by Decision Tree Regression")
+        plt.tight_layout()
+        plt.show()    
 
 
 # =========================================================================== #
 #                            FORWARD SELECTION                                #
 # =========================================================================== #   
 class ForwardSelector(BaseEstimator, TransformerMixin):
-    """Performs numeric feature selection using RFECV."""
+    """Performs nominal feature selection using forward selection."""
     def __init__(self, estimator, scoring=rmse, nominal=nominal):
         self._estimator = estimator
         self._scoring = scoring                
@@ -151,67 +206,203 @@ class ForwardSelector(BaseEstimator, TransformerMixin):
 
         # Initialize n_features as length of nominal
         n_features = len(self._nominal)        
-        average_scores = []
+        self.scores_ = []
 
         # Compute variable importance using FeatureRanker
-        ranker = FeatureRanker()
-        ranker.fit(X,y)        
+        importance = FeatureImportance()
+        importance.fit(X,y)        
         
         # Add features in order of descending importance and to model and cross-validate 
         for i in range(n_features):
-            X_new = X[ranker.importance_[0:i+1]].copy()
+            X_new = X[importance.importance_[0:i+1]].copy()
+            X_new = pd.get_dummies(X_new, drop_first=True)
             scores = cross_validate(self._estimator, X_new, y, scoring=self._scoring)
-            average_scores.append(np.mean(scores["test_score"]))
+            self.scores_.append(np.mean(scores["test_score"]))
         
         # Compute number of features based upon one standard error rule
-        std_error = sem(average_scores)
-        mean_average_scores = np.mean(average_scores)
+        std_error = sem(self.scores_)
+        mean_average_scores = np.mean(self.scores_)
         threshold = mean_average_scores - std_error
-        num_features = np.where(scores["test_score"] >= threshold)[0]
-        X_nominal = X[ranker.importance_["Original"][0:num_features+1]]
-        self.nominal_features_ = ranker.importance_["Original"][0:num_features+1]
-        print(f"Nominal Features Selected: {self.nominal_features}")
-
-
-        # Drop nominal features and concatenate selected features
-        X_new = X.drop(self._nominal, axis=1)
-        X_new = pd.concat((X_new, X_nominal), axis=1)
-        notify.leaving(__class__.__name__, "forward")
-        return X_new
-
-    def fit(self, X, y=None, **fit_params):
-        # Engage the selector
-        notify.entering(__class__.__name__, "fit")
-        if (self._feature_type == 'numeric'):
-            X_new = self.__rfecv(X, y)
-        else:
-            X_new = self._forward(X, y)
-        notify.leaving(__class__.__name__, "fit")        
+        self.num_features_ = np.where(scores["test_score"] >= threshold)[0]
         
+        self.features_selected_ = importance.importance_["Original"][0:self.num_features_+1]
+        print(f"Model: {self._estimator.__class__.__name__} Numeric Features Selected: {self.features_selected_}")
+
+        notify.leaving(__class__.__name__, "forward")
         return self
 
     def transform(self, X, **transform_params):
-        # Engage the selector
-        notify.entering(__class__.__name__, "transform")
-        if (self._feature_type == 'numeric'):
-            X_new = self.__rfecv()
-        else:
-            X_new = self._forward()
-        self._persistence.dump(self._selector)
-        notify.leaving(__class__.__name__, "transform")
-        return X_new
+        return X[self.features_selected_]
         
-
     def plot(self):
         sns.set_style("whitegrid")
         fig, ax = plt.subplots(figsize=(10,12))
-        x = range(self._min_features, len(self._feature_selector.grid_scores_)+self._min_features)
-        y = self._feature_selector.grid_scores_
+        x = range(self._min_features, self.num_features_ + self._min_features)
+        y = self.scores_
         d = {"x": x, "y":y}
         df = pd.DataFrame(d)
         ax = sns.lineplot(x=x, y=y, data=df)
         plt.xlabel("Number of Features Selected")
         plt.ylabel("Cross Validation Score (RMSE)")
-        plt.title("Recursive Feature Elimination via Cross-Validation")
+        plt.title("Forward Selection")
         plt.tight_layout()
         plt.show()
+
+# =========================================================================== #
+#                            FEATURE SELECTOR                                 #
+# =========================================================================== #   
+class FeatureSelector:
+    """Performs feature selection for an estimator."""
+    def __init__(self, estimator, scoring=rmse, nominal=nominal, 
+                numeric=numeric, persist=True):
+        self._estimator = estimator
+        self._scoring = scoring
+        self._nominal = nominal
+        self._numeric = numeric
+        self._persist = persist
+        self._fitted = False
+
+    def _select_features(self, X, y):
+
+        # Split data into numeric and nominal features
+        selector = ColumnSelector(columns=numeric):
+        X_numeric = selector.fit_transform(X, y)
+        selector = ColumnSelector(columns=nominal):
+        X_nominal = selector.fit_transform(X, y)        
+
+        # Numeric Feature Selection
+        self.numeric_selector_ = NumericSelector(estimator=estimator)
+        X_numeric = self.numeric_selector_.fit_transform(X_numeric, y)
+
+        # Nominal Feature Importance
+        self.feature_importance_ = FeatureImportance()
+        self.feature_importances_ = self.feature_importance_.fit_transform(X_numeric, y)        
+
+        # Nominal Feature Selection
+        self.nominal_selector_ = ForwardSelector(estimator=estimator)
+        X_nominal = self.nominal_selector_.fit_transform(X_nominal, y)        
+
+        # Store features selected
+        numeric_features = X_numeric.columns.tolist()
+        nominal_features = X_nominal.columns.tolist()
+        self.features_selected_ = numeric_features + nominal_features  
+        self.n_features_ = len(self.features_selected_)              
+
+        # Merge Numeric and Nominal Columns
+        return pd.concat((X_numeric,X_nominal), axis=1)
+
+    def _refit(self, X, y):
+        # Fit the estimator on the selected features
+        self.estimator_ = self._estimator
+        self.estimator_.fit(X, y)
+
+        # Store feature importances in terms of parameter weights
+        parameters = ["Intercept"] + X.columns
+        coef = [self.estimator_.intercept_] + list(self.estimator_.coef_)
+        d = {"Estimator": self.estimator_.__class__.__name__, "Parameter": parameters, "|Estimates|": np.abs(coef)}
+        self.parameters_ = pd.DataFrame(data=d)            
+        self.parameters_.sort_values(by=["|Estimates|"], inplace=True, ascending=False)        
+
+    def _save(self, X, y):
+        # Persist the data
+        train = pd.concat((X,y), axis=1)
+        persist = PersistDataFrame(directories["data"]["training"])
+        persist.dump(train, self._estimator.__class__.__name__)    
+
+        # Persist the estimator 
+        persist = PersistEstimator(directories["features"])    
+        persist.dump(self.estimator_, self.__class__.__name__)                
+
+
+    def fit(self, X, y, **fit_params):
+        """Fits the selector and determines features."""
+
+        self.X_ = self._select_features(X,y)
+        self._refit(self.X_,y)
+        if self._persist: self._save(self.X_, y)
+        self._fitted = True
+        
+    def print(self):
+        if self._fitted:
+            print("\n")
+            print("="*40)
+            print(tabulate(self.parameters_, headers="keys"))
+            print("="*40)
+        else:
+            print("The selector has not yet been fitted.")
+
+    def plot(self):
+        if self._fitted:
+
+
+            sns.set_style("whitegrid")
+            fig, ax = plt.subplots(figsize=(10,12))        
+            ax = sns.lineplot(x="|Estimates|", y="Parameter", data=self.parameters_)
+            plt.xlabel("Feature Importance")
+            plt.ylabel("Feature")
+            plt.title(f"{self.estimator_.__class__.__name__} Feature Importance")
+            plt.tight_layout()
+            plt.show()               
+
+
+# =========================================================================== #
+#                         MODEL FEATURE SELECTOR                              #
+# =========================================================================== #   
+class ModelFeatureSelector:
+    """Performs feature selection for all estimators."""
+    def __init__(self, estimators, scoring=rmse, nominal=nominal, 
+                numeric=numeric, persist=True):
+        self._estimators = estimators
+        self._scoring = scoring
+        self._nominal = nominal
+        self._numeric = numeric
+        self._persist = persist
+        self._fitted = False
+
+    def fit(self, X, y, **fit_params):
+        """Fits the feature selector on all estimators"""
+        self.selectors_ = {}
+        self.model_features_ = pd.DataFrame()  # Estimator, feature count
+        for name, estimator in estimators.items():
+            selector = FeatureSelector(estimator, self._scoring, self._nominal, 
+                                       self._numeric, self._persist)
+            selector.fit(X, y)
+            self.model_features_ = pd.concat((self.model_features_,selector.parameters_), axis=0)
+            self.selectors_[name] = selector
+        self._fitted = True
+
+    def get_selector(self, estimator_label=None):
+        if estimator_label:
+            return self.selectors_[estimator_label]
+        else:
+            return self.selectors_
+    
+    def print(self):
+        if self._fitted:
+            print("\n")
+            print("="*40)
+            print(tabulate(self.model_features_, headers="keys"))
+            print("="*40)
+        else:
+            print("The selector has not yet been fitted.")        
+
+# =========================================================================== #
+#                                  MAIN                                       #
+# =========================================================================== #   
+def main(X, y)
+    # Obtain the data
+    data = AmesData()
+    X, y = data.get()
+
+    # Perform Feature selection for regressors
+    selector = ModelFeatureSelector(regressors)
+    selector.fit(X,y)    
+
+    # Perform Feature selection for regressors
+    selector = ModelFeatureSelector(ensembles)
+    selector.fit(X,y)        
+
+if __name__ == "__main__":    
+    main()
+#%%
+

@@ -66,7 +66,8 @@ from globals import random_state, discrete, continuous, numeric, n_nominal_level
 from globals import nominal, ordinal, ordinal_map
 
 # Local modules
-from data_processor import AmesData, NominalEncoder, OrdinalEncoder
+from data import AmesData
+from data_processor import NominalEncoder, OrdinalEncoder
 from data_processor import ContinuousPreprocessor, DiscretePreprocessor, CategoricalPreprocessor
 from data_processor import DataScreener, TargetTransformer
 from feature_selection import FeatureSelector
