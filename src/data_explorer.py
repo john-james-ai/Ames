@@ -30,10 +30,12 @@ from tabulate import tabulate
 import pprint
 
 from globals import nominal
-from data_processor import AmesData
+from data import AmesData
 from tabulate import tabulate
 
-# --------------------------------------------------------------------------- #
+# =========================================================================== #
+#                        CATEGORICAL FEATURE METADATA                         #
+# =========================================================================== #
 def categorical_metadata(X):
     summary = pd.DataFrame()
     detail = pd.DataFrame()
@@ -159,26 +161,50 @@ class Catalyst:
         self._importance_orig.sort_values(by=["Importance"], inplace=True, ascending=False)
         print(tabulate(self._importance_orig, headers="keys", showindex=False))        
 
-    def selection(self):
+    def get_None_columns(self,X):
+        print(X.columns[X.isna().any()].tolist())
+        print(X["Garage_Yr_Blt"].describe()).T
+        print(X.shape[0])
+        print(len(X['Garage_Yr_Blt'].isna()))
+        print(sum(X['Garage_Yr_Blt'].isna()))
 
+# =========================================================================== #
+#                             DESCRIPTIVE STATISTICS                          #
+# =========================================================================== #    
+def describe(X):
+    print("\n\nNumeric Features")
+    #df = X.describe(percentiles=[.5],include=[np.number]).T
+    df = X.describe(percentiles=[0.5], include=[np.number]).apply(lambda s: s.apply(lambda x: format(x, 'g'))).T
+    print(df)
+    print("\n\nCategorical Features")
+    df = X.describe(exclude=[np.number]).T    
+    print(df)
+    
+def outliers(X):
+    out_gr_liv_area = X[X["Gr_Liv_Area"]>4000].shape[0]
+    out_garage_yr_blt = X[X["Garage_Yr_Blt"]>2010].shape[0]
+    X = X[X["Gr_Liv_Area"]<=4000]
+    out_garage_yr_blt2 = X[X["Garage_Yr_Blt"]>2010].shape[0]
+    print(f"There are {out_gr_liv_area} homes with extremely large living areas ")
+    print(f"There are {out_garage_yr_blt} homes with garages from the future ")
+    print(f"There are {out_garage_yr_blt2} homes with garages from the future after removing large homes")
 
-
-
-    def print(self, what="anova"):
-        if what == "anova":
-            print(tabulate(self._anova, headers="keys", showindex=False))
-
-
-
+def find_NAs(X):
+        print(X.columns[X.isna().any()].tolist())
+        print(X["Garage_Yr_Blt"].describe().T)
+        print(X.shape[0])
+        print(len(X['Garage_Yr_Blt'].isna()))
+        print(sum(X['Garage_Yr_Blt'].isna()))
+        df = X['Garage_Yr_Blt'].isna()
+        print(np.unique(df, return_counts=True))
+        df['Garage'] = np.where(df, 'Garage', 'No Garage')
+        print(np.unique(df['Garage'], return_counts=True))
 
 def main():
+    filepath = "../data/external/Ames_data.csv"
+    X = pd.read_csv(filepath)
+    describe(X)
 
-    data = AmesData()
-    X, y = data.get()
-
-    cat = Catalyst()
-    cat.importance(X,y)
-    
 
 if __name__ == "__main__":
     main()

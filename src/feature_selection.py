@@ -20,7 +20,6 @@
 # =========================================================================== #
 #                               1. LIBRARIES                                  #
 # =========================================================================== #
-#%%
 # System and python libraries
 import datetime
 import glob
@@ -42,15 +41,21 @@ from sklearn.preprocessing import FunctionTransformer, StandardScaler
 from sklearn.preprocessing import OneHotEncoder, PowerTransformer
 
 # Feature and model selection and evaluation
-from sklearn.feature_selection import RFE, SelectKBest, mutual_info_regression
+from sklearn.feature_selection import RFECV, SelectKBest, mutual_info_regression
 from sklearn.metrics import make_scorer
 from sklearn.model_selection import KFold, cross_validate
 from sklearn.pipeline import make_pipeline, Pipeline, FeatureUnion
 from sklearn.model_selection import GridSearchCV
 from sklearn.tree import DecisionTreeRegressor
 
-# Models 
-from models import regressors, ensembles 
+# Regression based estimators
+from sklearn.linear_model import LinearRegression, Lasso, Ridge, ElasticNet
+
+# Tree-based estimators
+from sklearn.experimental import enable_hist_gradient_boosting
+from sklearn.ensemble import AdaBoostRegressor, BaggingRegressor, ExtraTreesRegressor
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import HistGradientBoostingRegressor
 
 # Visualizing data
 import seaborn as sns
@@ -61,10 +66,12 @@ from tabulate import tabulate
 from utils import Notify, PersistEstimator, PersistNumpy, PersistDataFrame, PersistDictionary
 
 # Global Variables
-from globals import random_state, discrete, continuous, numeric, n_nominal_levels
-from globals import nominal, ordinal, ordinal_map, directories
+from globals import discrete, continuous, numeric, n_nominal_levels
+from globals import nominal, ordinal, ordinal_map, directories, regressors, ensembles 
 from metrics import rmse
-from utils import onehotmap, notify
+from data import AmesData
+from data_processor import NominalEncoder
+from utils import onehotmap, notify, validate, convert, comment
 # =========================================================================== #
 #                            COLUMN SELECTOR                                  #
 # =========================================================================== #  
@@ -101,6 +108,8 @@ class NumericSelector(BaseEstimator, TransformerMixin):
     def fit(self, X, y, **fit_params):
         """ Performs feature selection for numeric features."""
         notify.entering(__class__.__name__, "fit")
+        classname = self.__class__.__name__
+        methodname = "fit"
 
         # Run RFECV on chosen estimator and fit the model
         self.selector_ = RFECV(estimator=self._estimator,min_features_to_select=1,
@@ -109,12 +118,9 @@ class NumericSelector(BaseEstimator, TransformerMixin):
 
         # Extract selected numeric features
         self.feature_names_ = X.columns
-        self.features_selected_ = self._numeric[self.selector_.support_].tolist()
-        print(f"Model: {self._estimator.__class__.__name__} Numeric Features Selected: {self.features_selected_}")
-
-        # Save the estimator
-        persistence=PersistEstimator()
-        persistence.dump(self.selector_, self._estimator.__class__.__name__)
+        self.features_selected_ = np.array(self._numeric)[self.selector_.support_].tolist()
+        message = f"\nModel: {self._estimator.__class__.__name__} selected {len(self.features_selected_)} numeric features\n"
+        comment.regarding(classname, methodname, message)
         
         notify.leaving(__class__.__name__, "fit")
         return self
@@ -122,7 +128,7 @@ class NumericSelector(BaseEstimator, TransformerMixin):
     def transform(self, X, **transform_params):
         return X[self.features_selected_]
 
-    def plot()
+    def plot(self):
         sns.set_style("whitegrid")
         fig, ax = plt.subplots(figsize=(10,12))        
 
@@ -151,35 +157,53 @@ class NumericSelector(BaseEstimator, TransformerMixin):
 # =========================================================================== #   
 class FeatureImportance(BaseEstimator, TransformerMixin):
     """Returns a list of features in descending order of importance."""
-    def __init__(self, nominal=nominal):
+    def __init__(self, estimator, nominal=nominal):
+        self._estimator = estimator
         self._nominal = nominal
 
     def fit(self, X, y, **fit_params):
-        notify.entering(__class__.__name__, "fit")
-        # Prepare Data              
-        X = pd.get_dummies(X, drop_first=True)
-        self.features_ = onehotmap(X.columns, self._nominal) # Returns original column for each dummy variable
+        notify.entering(__class__.__name__, "fit")   
+        classname = self.__class__.__name__
+        methodname = "fit"
+        
+        # Prepare Data
+        enc = NominalEncoder()
+        enc.fit(X)
+        X = enc.transform(X)
+        original_features = enc.get_original(enc.transformed_features_)      
 
-        # Instantiate the decision tree and store results in dataframe
-        tree = DecisionTreeRegressor().fit(X, y)        
-        d = {"Feature":  self.features_, "Level": X.columns, "Importance": tree.feature_importances_}
+        # Validate data
+        message = "Pending validation of data after nominal encoding"
+        comment.regarding(classname, methodname, message)
+        validate(X,y)    
+        message = "Completed validation of data after nominal encoding"
+        comment.regarding(classname, methodname, message)
+
+        # Instantiate the estimator and store results in dataframe
+        model = self._estimator.fit(X, y)  
+        if hasattr(self._estimator,"coef_"):
+            importances = model.coef_.flatten()        
+        else:
+            importances = model.feature_importances_.flatten()
+
+        d = {"Feature":  original_features, "Level": enc.transformed_features_, "Importance": importances}
         df = pd.DataFrame(data=d)
         
         # Aggregate, summarize and sort mean importance by original column name
         self.importance_ = df.groupby("Feature").mean().reset_index()        
         self.importance_.sort_values(by=["Importance"], inplace=True, ascending=False)
+        self.ranked_features_ = self.importance_["Feature"].values
 
-        # Save the estimator
-        persistence=PersistEstimator()
-        persistence.dump(tree, self.__class__.__name__)
+        message = f"Feature Importances\n{self.importance_}"
+        comment.regarding(classname, methodname, message)
 
         notify.leaving(__class__.__name__, "fit")    
         return self
 
     def transform(self, X, **transform_params):
-        return self.importance_
+        return self.ranked_features_
 
-    def plot()
+    def plot(self):
         sns.set_style("whitegrid")
         fig, ax = plt.subplots(figsize=(10,12))        
         ax = sns.lineplot(x="Importance", y="Feature", data=self.importance_)
@@ -203,19 +227,30 @@ class ForwardSelector(BaseEstimator, TransformerMixin):
     def fit(self, X, y, **fit_params):
         """Performs forward feature selection for categorical variables."""
         notify.entering(__class__.__name__, "fit")
+        classname = self.__class__.__name__
+        methodname = "fit"        
 
-        # Initialize n_features as length of nominal
-        n_features = len(self._nominal)        
-        self.scores_ = []
+        # Obtain ranked list of NOMINAL features by importance
+        fi = FeatureImportance(self._estimator, nominal=self._nominal).fit(X[self._nominal],y)
+        ranked_features = fi.transform(X)        
 
-        # Compute variable importance using FeatureRanker
-        importance = FeatureImportance()
-        importance.fit(X,y)        
+        # Separate numeric features, then add nominal features one by one in order of importance
+        X_numeric = X.drop(columns=self._nominal, inplace=False)
+        X_nominal = X[self._nominal]
+
+        # Create nominal encoder object 
+        enc = NominalEncoder()
         
         # Add features in order of descending importance and to model and cross-validate 
-        for i in range(n_features):
-            X_new = X[importance.importance_[0:i+1]].copy()
-            X_new = pd.get_dummies(X_new, drop_first=True)
+        self.scores_ = []
+        for i in range(len(ranked_features)):
+            features = ranked_features[0:i+1]
+            message = f"Currently processing features: {features}"
+            comment.regarding(classname, methodname, message)
+            X_nominal_transformed = enc.fit_transform(X_nominal[features],y)
+
+            X_new = pd.concat((X_numeric, X_nominal_transformed), axis=1)
+            X_new, y = convert(X_new, y)
             scores = cross_validate(self._estimator, X_new, y, scoring=self._scoring)
             self.scores_.append(np.mean(scores["test_score"]))
         
@@ -225,13 +260,14 @@ class ForwardSelector(BaseEstimator, TransformerMixin):
         threshold = mean_average_scores - std_error
         self.num_features_ = np.where(scores["test_score"] >= threshold)[0]
         
-        self.features_selected_ = importance.importance_["Original"][0:self.num_features_+1]
-        print(f"Model: {self._estimator.__class__.__name__} Numeric Features Selected: {self.features_selected_}")
+        self.features_selected_ = ranked_features[0:self.num_features_+1]
+        message = f"Model: {self._estimator.__class__.__name__} selected {len(self.features_selected_)} features."
+        comment.regarding(classname, methodname, message)
 
         notify.leaving(__class__.__name__, "forward")
         return self
 
-    def transform(self, X, **transform_params):
+    def transform(self, X, **transform_params):        
         return X[self.features_selected_]
         
     def plot(self):
@@ -265,22 +301,18 @@ class FeatureSelector:
     def _select_features(self, X, y):
 
         # Split data into numeric and nominal features
-        selector = ColumnSelector(columns=numeric):
+        selector = ColumnSelector(columns=numeric)
         X_numeric = selector.fit_transform(X, y)
-        selector = ColumnSelector(columns=nominal):
+        selector = ColumnSelector(columns=nominal)
         X_nominal = selector.fit_transform(X, y)        
 
         # Numeric Feature Selection
-        self.numeric_selector_ = NumericSelector(estimator=estimator)
+        self.numeric_selector_ = NumericSelector(estimator=self._estimator)
         X_numeric = self.numeric_selector_.fit_transform(X_numeric, y)
 
-        # Nominal Feature Importance
-        self.feature_importance_ = FeatureImportance()
-        self.feature_importances_ = self.feature_importance_.fit_transform(X_numeric, y)        
-
         # Nominal Feature Selection
-        self.nominal_selector_ = ForwardSelector(estimator=estimator)
-        X_nominal = self.nominal_selector_.fit_transform(X_nominal, y)        
+        self.nominal_selector_ = ForwardSelector(estimator=self._estimator)
+        X_nominal = self.nominal_selector_.fit_transform(X, y)        
 
         # Store features selected
         numeric_features = X_numeric.columns.tolist()
@@ -293,8 +325,11 @@ class FeatureSelector:
 
     def _refit(self, X, y):
         # Fit the estimator on the selected features
-        self.estimator_ = self._estimator
-        self.estimator_.fit(X, y)
+        notify.entering(__class__.__name__, "refit")        
+        classname = self.__class__.__name__
+        methodname = "refit"                
+        
+        self._estimator.fit(X, y)
 
         # Store feature importances in terms of parameter weights
         parameters = ["Intercept"] + X.columns
@@ -316,11 +351,15 @@ class FeatureSelector:
 
     def fit(self, X, y, **fit_params):
         """Fits the selector and determines features."""
+        notify.entering(__class__.__name__, "fit")        
+        classname = self.__class__.__name__
+        methodname = "fit"        
 
-        self.X_ = self._select_features(X,y)
+        self.X_ = self._select_features(X,y.values)
         self._refit(self.X_,y)
-        if self._persist: self._save(self.X_, y)
+        if self._persist: self._save(self.X_, y.values)
         self._fitted = True
+        notify.leaving(__class__.__name__, "fit")
         
     def print(self):
         if self._fitted:
@@ -361,15 +400,27 @@ class ModelFeatureSelector:
 
     def fit(self, X, y, **fit_params):
         """Fits the feature selector on all estimators"""
+        notify.entering(__class__.__name__, "fit")        
+        classname = self.__class__.__name__
+        methodname = "fit"                
         self.selectors_ = {}
         self.model_features_ = pd.DataFrame()  # Estimator, feature count
-        for name, estimator in estimators.items():
+        
+        for name, estimator in estimators.items():            
+            # Refresh data
+            X_train = X
+            y_train = y            
+
+            message = f"Now Processing Model {estimator.__class__.__name__}."
+            comment.regarding(classname, methodname, message)
+        
             selector = FeatureSelector(estimator, self._scoring, self._nominal, 
                                        self._numeric, self._persist)
-            selector.fit(X, y)
+            selector.fit(X_train, y_train)
             self.model_features_ = pd.concat((self.model_features_,selector.parameters_), axis=0)
             self.selectors_[name] = selector
         self._fitted = True
+        notify.leaving(__class__.__name__, "fit")        
 
     def get_selector(self, estimator_label=None):
         if estimator_label:
@@ -389,18 +440,24 @@ class ModelFeatureSelector:
 # =========================================================================== #
 #                                  MAIN                                       #
 # =========================================================================== #   
-def main(X, y)
+def main():
     # Obtain the data
     data = AmesData()
-    X, y = data.get()
+    X, y = data.get(force=True)        
 
-    # Perform Feature selection for regressors
-    selector = ModelFeatureSelector(regressors)
-    selector.fit(X,y)    
+    # Test Feature Selector
+    selector = FeatureSelector(LinearRegression())
+    selector.fit(X,y)
+    selector.print()
+    selector.plot()
 
-    # Perform Feature selection for regressors
-    selector = ModelFeatureSelector(ensembles)
-    selector.fit(X,y)        
+    # # Perform Feature selection for regressors
+    # selector = ModelFeatureSelector(regressors)
+    # selector.fit(X,y)    
+
+    # # Perform Feature selection for regressors
+    # selector = ModelFeatureSelector(ensembles)
+    # selector.fit(X,y)        
 
 if __name__ == "__main__":    
     main()

@@ -62,8 +62,9 @@ import matplotlib.pyplot as plt
 from tabulate import tabulate
 
 # Global Variables
-from globals import random_state, discrete, continuous, numeric, n_nominal_levels
+from globals import discrete, continuous, numeric, n_nominal_levels
 from globals import nominal, ordinal, ordinal_map
+from globals import regressors, regressor_parameters, ensembles, ensemble_parameters
 
 # Local modules
 from data import AmesData
@@ -74,78 +75,6 @@ from feature_selection import FeatureSelector
 from metrics import rmse
 from utils import notify, Persist
 
-# =========================================================================== #
-#                                ESTIMATORS                                   #
-# =========================================================================== #
-regressors = {}
-regressors.update({"Linear Regression": LinearRegression()})
-regressors.update({"Lasso": Lasso()})
-regressors.update({"Ridge": Ridge()})
-regressors.update({"ElasticNet": ElasticNet()})
-
-ensembles = {}
-ensembles.update({"AdaBoost": AdaBoostRegressor()})
-ensembles.update({"Bagging": BaggingRegressor()})
-ensembles.update({"Extra Trees": ExtraTreesRegressor()})
-ensembles.update({"Gradient Boosting": GradientBoostingRegressor()})
-ensembles.update({"Random Forest": RandomForestRegressor()})
-ensembles.update({"Histogram Gradient Boosting": HistGradientBoostingRegressor()})
-
-
-# =========================================================================== #
-#                             HYPERPARAMETERS                                 #
-# =========================================================================== #
-# Parameter Grid
-regressor_parameters = {}
-regressor_parameters.update({"Linear Regression":{"estimator__normalize": [False]}})
-regressor_parameters.update({"Lasso": {
-    "estimator__alpha": [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.25, 0.50, 0.75, 1.0],
-    "estimator__n_jobs": [-1]}})
-regressor_parameters.update({"Ridge":{
-        "estimator__alpha": [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.25, 0.50, 0.75, 1.0],
-        "estimator__n_jobs": [-1]}})        
-regressor_parameters.update({"ElasticNet":{
-        "estimator__alpha": [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.25, 0.50, 0.75, 1.0],
-        "estimator__l1_ratio": np.arange(0.0,1.0,0.1),
-        "estimator__n_jobs": [-1]}})        
-
-ensemble_parameters = {}
-ensemble_parameters.update({"AdaBoost": {
-        "estimator__base_estimator": None,
-        "estimator__n_estimators": [50,100],
-        "estimator__learning_rate": [0.001, 0.01, 0.05, 0.1, 0.25, 0.50, 0.75, 1.0]}})
-ensemble_parameters.update({"Bagging": {
-        "estimator__base_estimator": None,
-        "estimator__n_estimators": [50,100],
-        "estimator__max_features": [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-        "estimator__n_jobs": [-1]}}) 
-ensemble_parameters.update({"Extra Trees": {        
-        "estimator__n_estimators": [50,100],
-        "estimator__max_depth": [2,3,4,5,6],
-        "estimator__min_samples_split": [0.005, 0.01, 0.05, 0.10],
-        "estimator__min_samples_leaf": [0.005, 0.01, 0.05, 0.10],
-        "estimator__max_features": ["auto", "sqrt", "log2"],
-        "estimator__n_jobs": [-1]}})         
-ensemble_parameters.update({"Gradient Boosting": {        
-        "estimator__learning_rate": [0.15,0.1,0.05,0.01,0.005,0.001],
-        "estimator__n_estimators": [50,100],
-        "estimator__max_depth": [2,3,4,5,6],
-        "estimator__criterion": ["mse"],
-        "estimator__min_samples_split": [0.005, 0.01, 0.05, 0.10],
-        "estimator__min_samples_leaf": [0.005, 0.01, 0.05, 0.10],
-        "estimator__max_features": ["auto", "sqrt", "log2"]}})                        
-ensemble_parameters.update({"Random Forest": {        
-        "estimator__n_estimators": [50,100],
-        "estimator__max_depth": [2,3,4,5,6],
-        "estimator__criterion": ["mse"],
-        "estimator__min_samples_split": [0.005, 0.01, 0.05, 0.10],
-        "estimator__min_samples_leaf": [0.005, 0.01, 0.05, 0.10],
-        "estimator__max_features": ["auto", "sqrt", "log2"],
-        "estimator__n_jobs": [-1]}})      
-ensemble_parameters.update({"Histogram Gradient Boosting": {  
-        "estimator__learning_rate": [0.15,0.1,0.05,0.01,0.005,0.001],              
-        "estimator__max_depth": [2,3,4,5,6],        
-        "estimator__min_samples_leaf": [0.005, 0.01, 0.05, 0.10]}})       
 
 # =========================================================================== #
 #                           MODEL EVALUATER                                   #

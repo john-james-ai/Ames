@@ -61,25 +61,38 @@ import matplotlib.pyplot as plt
 from tabulate import tabulate
 
 # Utilities
-from utils import notify, Persist
+from utils import notify, Persist, validate, convert
 
 # Global Variables
-from globals import random_state, discrete, continuous, numeric, n_nominal_levels
+from globals import discrete, continuous, numeric, n_nominal_levels
 from globals import nominal, ordinal, ordinal_map
+
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', None)
+pd.set_option('display.max_colwidth', None)
+
+# =========================================================================== #
+#                          1. DATA CLEARNER                                   #
+# =========================================================================== #  
+class DataCleaner:
+    def __init__(self):
+        pass
+    def run(self, X, y=None):
+        X.replace(to_replace="NA", value=np.NaN, inplace=True)
+        X["Garage_Yr_Blt"].replace(to_replace=2207, value=2007, inplace=True)
+        return X, y
+
 
 # =========================================================================== #
 #                          2. DATA SCREENER                                   #
 # =========================================================================== #    
-class DataScreener(BaseEstimator, TransformerMixin):
+class DataScreener:
     def __init__(self, ordinal_map=ordinal_map):
         self._ordinal_map = ordinal_map
 
-    def fit(self, X, y=None, **fit_params):
-        return self
-    
-    def transform(self, X, **transform_params):
-        """Creation, removal, and encoding of features."""
-        notify.entering(__class__.__name__, "transform")
+    def run(self, X, y=None, **fit_params):
+        notify.entering(__class__.__name__, "run")
         # Add an age feature and remove year built
         X["Age"] = X["Year_Sold"] - X["Year_Built"]
         X["Age"].fillna(X["Age"].median())
@@ -88,15 +101,39 @@ class DataScreener(BaseEstimator, TransformerMixin):
         X = X.drop(columns=["Latitude", "Longitude"])
 
         # Remove outliers 
-        idx = X[X["Gr_Liv_Area"] < 4000].index.tolist()
+        idx = X[(X["Gr_Liv_Area"] <= 4000) & (X["Garage_Yr_Blt"]<=2010)].index.tolist()
         X = X.iloc[idx]
         y = y.iloc[idx]
 
-        notify.leaving(__class__.__name__, "transform")
+        notify.leaving(__class__.__name__, "run")
+        return X, y
 
-        return X, y        
 # =========================================================================== #
-#                        3. DATA PREPROCESSING                                #
+#                         3. DATA AUGMENTATION                                #
+# =========================================================================== #    
+class DataAugmentor:
+    def __init__(self):
+        pass
+    def run(self, X, y=None):
+        notify.entering(__class__.__name__, "run")
+        # Add an age feature and remove year built
+        X["Age"] = X["Year_Sold"] - X["Year_Built"]
+        X["Age"].fillna(X["Age"].median())        
+
+        # Add age feature for garage.
+        X["Garage_Age"] = X["Year_Sold"] - X["Garage_Yr_Blt"]
+        X["Garage_Age"].fillna(value=0,inplace=True)        
+
+
+
+
+        notify.leaving(__class__.__name__, "run")
+        return X, y
+
+
+
+# =========================================================================== #
+#                        4. DATA PREPROCESSING                                #
 # =========================================================================== #
 class ContinuousPreprocessor(BaseEstimator, TransformerMixin):
     def __init__(self):
@@ -136,7 +173,7 @@ class CategoricalPreprocessor(BaseEstimator, TransformerMixin):
         imputer = SimpleImputer(strategy="most_frequent")
         
         # Perform imputation of categorical variables to most frequent
-        X[categorical] = imputer.fit_transform(X[categorical])
+        X[categorical] = imputer.fit_transform(X[categorical])        
 
         notify.leaving(__class__.__name__, "transform")
         
@@ -152,7 +189,7 @@ class DiscretePreprocessor(BaseEstimator, TransformerMixin):
     def transform(self, X,  **transform_params):       
         notify.entering(__class__.__name__, "transform")
         # Create imputer and scaler objects
-        imputer = SimpleImputer(strategy="most_frequent")
+        imputer = SimpleImputer(strategy="mean")
         scaler = StandardScaler()        
         
         # Perform imputation of discrete variables to most frequent
@@ -165,7 +202,7 @@ class DiscretePreprocessor(BaseEstimator, TransformerMixin):
 
 
 # =========================================================================== #
-#                            4. ENCODERS                                      #
+#                            5. ENCODERS                                      #
 # =========================================================================== #
 class OrdinalEncoder(BaseEstimator, TransformerMixin):
     def __init__(self, ordinal_map=ordinal_map):
@@ -189,41 +226,60 @@ class OrdinalEncoder(BaseEstimator, TransformerMixin):
         return X
 # --------------------------------------------------------------------------- #
 class NominalEncoder(BaseEstimator, TransformerMixin):
+    """Accepts nominal features (only) and converts to One-Hot representation."""
     
-    def __init__(self, nominal=nominal):
-        self._nominal = nominal
+    def __init__(self):        
+        pass
 
     def fit(self, X, y=None, **fit_params):
+        notify.entering(__class__.__name__, "fit")
+        self.original_features_ = X.columns.tolist()
+        self.ohe_ = OneHotEncoder()
+        self.ohe_.fit(X)
+        notify.leaving(__class__.__name__, "fit")
         return self
     
     def transform(self, X,  **transform_params):       
-        """Converting nominal variables to one-hot representation."""
+        """Converting nominal variables to one-hot representation."""        
         notify.entering(__class__.__name__, "transform")
-        n = X.shape[0]
-        # Extract nominal from X
-        nominal = pd.Series(self._nominal)
-        features = X.columns
-        nominal_features = features[features.isin(nominal)]
-        X_nominal = X[nominal_features]   
-        X.drop(nominal_features, axis=1, inplace=True)    
-        n_other_features = X.shape[1]
 
-        # Encode nominal and store in dataframe with feature names
-        enc = OneHotEncoder()
-        X_nominal = enc.fit_transform(X_nominal).toarray()
-        X_nominal = pd.DataFrame(data=X_nominal)
-        X_nominal.columns = enc.get_feature_names()
-
-        # Concatenate X with X_nominal and validate    
-        X = pd.concat([X, X_nominal], axis=1)
-        expected_shape = (n,n_other_features+n_total_feature_levels)
-        assert(X.shape == expected_shape), "Error in Encode Nominal. X shape doesn't match expected."
+        self.X_ = self.ohe_.transform(X).toarray()
+        self.transformed_features_ = self.ohe_.get_feature_names(self.original_features_).tolist()        
+        self.X_df_ = pd.DataFrame(self.X_, columns=self.transformed_features_)
+        self.to_original_ = {}
+        self.to_transformed_ = {}
+        
+        for i in self.transformed_features_:
+            for j in self.original_features_:
+                self.to_transformed_[j] = self.to_transformed_[j] or []  
+                if j in i:
+                    self.to_original_[i] = j
+                    self.to_transformed_[j].append(i)
+                    break        
 
         notify.leaving(__class__.__name__, "transform")
+        return self.X_df_ 
+        
+    def inverse_transform(self, X,  **transform_params):               
+        return self.ohe_.inverse_transform(X)
 
-        return X
+    def get_original(self, transformed):
+        original = []
+        for i in transformed:            
+            for k,v in self.to_original_.items():
+                if i == k:
+                    original.append(v)
+                    break
+        return original
+
+    def get_transformed(self, original):
+        transformed = []
+        for i in original:
+            transformed += self.to_transformed_[i]            
+        return transformed
+
 # =========================================================================== #
-#                          5. TARGET TRANSFORMER                              #
+#                          6. TARGET TRANSFORMER                              #
 # =========================================================================== #
 class TargetTransformer(BaseEstimator, TransformerMixin):
     
@@ -247,3 +303,4 @@ class TargetTransformer(BaseEstimator, TransformerMixin):
         df = pd.DataFrame(data=d)
         notify.leaving(__class__.__name__, "inverse_transform")        
         return df
+

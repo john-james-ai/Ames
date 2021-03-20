@@ -20,13 +20,19 @@
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import OneHotEncoder
-from data_processor import AmesData
+from data import AmesData
 from globals import nominal
 data = AmesData()
 X, y = data.get()
+
 X = X[nominal]
-label_mapping = {}
-print(X.head())
-for col in nominal:
-    X[col], label_mapping[col] = pd.factorize(X[col])    
-print(X.head())
+fn = X.columns
+print(X.shape)
+ohe = OneHotEncoder()
+X = ohe.fit_transform(X)
+print(X.shape)
+print(ohe.categories_)
+print(ohe.get_feature_names(fn))
+X = ohe.inverse_transform(X)
+print(X.shape)
+#%%

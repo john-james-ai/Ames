@@ -25,10 +25,56 @@ import os
 import numpy as np
 import pandas as pd
 import pickle
+from tabulate import tabulate
 from sklearn.linear_model import LinearRegression
+from sklearn.utils import check_X_y, check_array
+
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', None)
+pd.set_option('display.max_colwidth', None)
+# =========================================================================== #
+#                        VALIDATION AND CONVERSION                            #
+# =========================================================================== #
+def check_NaN(X):
+    if isinstance(X, pd.DataFrame):
+        X_nan = X[X.isna().any(axis=1)]
+        assert(isinstance(X_nan, pd.DataFrame))
+        if X_nan.shape[0] > 0:            
+            cols_w_nans = X.columns[X.isna().any()].tolist()
+            data_w_nans = X.filter(items=cols_w_nans)
+            data_w_nans = data_w_nans[data_w_nans.isna()]
+            n_cols_w_nans = len(cols_w_nans)
+            print(f"\nThere are {X_nan.shape[0]} observations with NaN values")
+            print(f"There are {n_cols_w_nans} columns with NaN values")
+            print("Samples\n")
+            print(data_w_nans.sample(10))            
+            assert(X_nan.shape[0]==0), "The above rows have NaN values."
+        
+
+def validate(X, y=None, dtype=None):
+    """Validates, but does not convert X, y."""
+    if isinstance(X, pd.DataFrame):
+        check_NaN(X)
+        X = X.to_numpy()
+    if isinstance(y, pd.DataFrame):
+        y = y.values.ravel()
+    if y.any():
+        check_X_y(X,y, dtype=dtype)
+    else:
+        check_array(X, dtype=dtype)
+
+def convert(X, y, dtype="numeric"):
+    """Validates and converts X to 2-d array and y to 1d array."""
+    if isinstance(X, pd.DataFrame):
+        check_NaN(X)
+        X = X.to_numpy()
+    if isinstance(y, pd.DataFrame):
+        y = y.values.ravel()
+    return check_X_y(X,y, dtype=dtype)
 
 # =========================================================================== #
-#                              PERSIST                                        #
+#                                 PERSIST                                     #
 # =========================================================================== #
 class Persist(ABC):
     """Base class for classes that manage model and model metadata  persistence."""
@@ -96,7 +142,7 @@ class Persist(ABC):
 # =========================================================================== #
 class PersistEstimator(Persist):
     """ Responsible for serializing and deserializing estimators."""
-    def __init__(self, directory="../models/"):
+    def __init__(self, directory="../tests/"):
         super().__init__(directory)
 
     def _get_item_name(self, item):
@@ -117,7 +163,7 @@ class PersistEstimator(Persist):
 # =========================================================================== #
 class PersistNumpy(Persist):
     """ Responsible for persisting arrays."""
-    def __init__(self, directory="../models/"):
+    def __init__(self, directory="../tests/"):
         super().__init__(directory)
 
     def _get_item_name(self, item):
@@ -138,7 +184,7 @@ class PersistNumpy(Persist):
 # =========================================================================== #
 class PersistDataFrame(Persist):
     """ Responsible for persisting dataframes."""
-    def __init__(self, directory="../models/"):
+    def __init__(self, directory="../tests/"):
         super().__init__(directory)
 
     def _get_item_name(self, item):
@@ -159,7 +205,7 @@ class PersistDataFrame(Persist):
 # =========================================================================== #
 class PersistDictionary(Persist):
     """ Responsible for persisting dictionary."""
-    def __init__(self, directory="../models/"):
+    def __init__(self, directory="../tests/"):
         super().__init__(directory)
 
     def _get_item_name(self, item):
@@ -185,6 +231,7 @@ def onehotmap(features, nominal):
                 np.append(groups,col)
                 break
     return groups            
+
 # --------------------------------------------------------------------------- #
 class Notify:
     def __init__(self, verbose=True):
@@ -192,12 +239,25 @@ class Notify:
 
     def entering(self, classname, methodname=None):
         if self._verbose:
-            print(f">>>>Entering {classname}: {methodname}")
+            print(f">>>> Entering {classname}: {methodname}")
 
     def leaving(self, classname, methodname=None):
         if self._verbose:
-            print(f"<<<<Leaving {classname}: {methodname}")
+            print(f"<<<< Leaving {classname}: {methodname}")
 notify = Notify(verbose=True)    
+
+class Comment:
+    def __init__(self, verbose=True):
+        self._verbose = verbose
+
+    def regarding(self, classname, methodname=None, message=None):
+
+        methodname = methodname or "Not Specified"
+        if self._verbose:
+            print(f"\nClass: {classname} Method: {methodname} Message: {message}\n")
+
+notify = Notify(verbose=True)    
+comment = Comment(verbose=True)
 
 # --------------------------------------------------------------------------- #
 def test():
@@ -232,6 +292,6 @@ def test():
     
 
 
-if __name__ == "__main__":    
+if __name__ == "__main__":        
     test()
 #%%
