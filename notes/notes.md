@@ -46,5 +46,10 @@ Things to consider:
       4. Nominal Preprocessing
          1. Mean Encoding
       5. Standardize
-   5. 
+   5. Feature Selection
+   6. GridSearchCV
+   7. Predict
+   8. Rinse Repeat
+
+Note: No need to keep track of PID. It will be in the test set.
    

@@ -262,8 +262,6 @@ class Comment:
         self._verbose = verbose
 
     def regarding(self, classname, message=None):
-
-        methodname = methodname or "Not Specified"
         if self._verbose:
             print(f"\nClass {classname}: {message}\n")
 

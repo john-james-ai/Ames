@@ -28,12 +28,13 @@ import itertools
 from joblib import dump, load
 import os
 import pickle
+import uuid
 # Manipulating, analyzing and processing data
 from collections import OrderedDict
 import numpy as np
 import pandas as pd
 import scipy as sp
-from scipy.stats.stats import pearsonr
+from scipy.stats.stats import pearsonr, f_oneway
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.experimental import enable_iterative_imputer
@@ -263,7 +264,7 @@ class DataScreener:
         notify.entering(__class__.__name__, "run")
 
         # Remove longitude and latitude
-        X = X.drop(columns=["Latitude", "Longitude"])
+        X = X.drop(columns=["Latitude", "Longitude", "PID"])
 
         # Remove outliers 
         idx = X[(X["Gr_Liv_Area"] <= 4000) & (X["Garage_Yr_Blt"]<=2010)].index.tolist()
@@ -329,6 +330,10 @@ class ContinuousPreprocessor(BaseEstimator, TransformerMixin):
         power = PowerTransformer(method="yeo-johnson", standardize=False)
         X[self._continuous] = power.fit_transform(X[self._continuous])
 
+        # Scale the features and standardize to zero mean unit variance
+        scaler = StandardScaler()
+        X[self._continuous] = scaler.fit_transform(X[self._continuous])        
+
         notify.leaving(__class__.__name__, "transform")
         
         return X
@@ -350,6 +355,11 @@ class DiscretePreprocessor(BaseEstimator, TransformerMixin):
         # Default strategy is the mean.
         imputer = SimpleImputer(strategy=self._strategy)
         X[self._discrete] = imputer.fit_transform(X[self._discrete])
+
+        # Scale the features and standardize to zero mean unit variance
+        scaler = StandardScaler()
+        X[self._discrete] = scaler.fit_transform(X[self._discrete])
+        
         
         notify.leaving(__class__.__name__, "transform")
 
@@ -381,6 +391,10 @@ class OrdinalPreprocessor(BaseEstimator, TransformerMixin):
         for variable, mappings in self._ordinal_map.items():
             for k,v in mappings.items():
                 X[variable].replace({k:v}, inplace=True)        
+
+        # Scale the features and standardize to zero mean unit variance
+        scaler = StandardScaler()
+        X[self._ordinal] = scaler.fit_transform(X[self._ordinal])
 
         notify.leaving(__class__.__name__, "transform")
         
@@ -510,8 +524,9 @@ class TargetEncoderLOO(TargetEncoder):
 #                        8. NOMINAL PREPROCESSING                             #
 # =========================================================================== #
 class NominalPreprocessor(BaseEstimator, TransformerMixin):
-    def __init__(self, encoder=TargetEncoderLOO(nominal)):                
+    def __init__(self, encoder=TargetEncoderLOO(nominal), nominal=nominal):                
         self._encoder = encoder
+        self._nominal = nominal
 
     def fit(self, X, y=None, **fit_params):
         notify.entering(__class__.__name__, "fit")
@@ -522,10 +537,16 @@ class NominalPreprocessor(BaseEstimator, TransformerMixin):
     def transform(self, X, y=None,  **transform_params):            
         notify.entering(__class__.__name__, "transform")        
         notify.leaving(__class__.__name__, "transform")
-        return self._encoder.transform(X, y)
+        X = self._encoder.transform(X, y)
+
+        # Scale the features and standardize to zero mean unit variance
+        scaler = StandardScaler()
+        X[self._nominal] = scaler.fit_transform(X[self._nominal])
+        return X        
     
-    def fit_transform(self, X,y=None):
-        return self._encoder.fit_transform(X, y)
+    def fit_transform(self, X,y=None):        
+        self.fit(X,y)
+        return self.transform(X,y)
 
 # =========================================================================== #
 #                            9. BASE FILTER                                   #
@@ -534,11 +555,9 @@ class BaseFilter(BaseEstimator, TransformerMixin, ABC):
     def __init__(self):
         pass    
     
-    def report(self, X):
+    def report(self, X, y=None):
         classname = self.__class__.__name__
-        print("\nSuspects")
-        print(self.suspects_)
-        message = f"The following {len(self.features_removed_)} were removed from the data.\n{self.features_removed_}."
+        message = f"The following {len(self.features_removed_)} features were removed from the data.\n{self.features_removed_}."
         comment.regarding(classname, message)
 
 
@@ -546,7 +565,7 @@ class BaseFilter(BaseEstimator, TransformerMixin, ABC):
 #                         10. COLLINEARITY FILTER                             #
 # =========================================================================== #  
 class CollinearityFilter(BaseFilter):
-    def __init__(self, features, threshold=0.80, alpha=0.05, numeric=numeric):
+    def __init__(self, features, threshold=0.7, alpha=0.05, numeric=numeric):
         self._threshold = threshold
         self._alpha = alpha
         self._features = features        
@@ -555,7 +574,8 @@ class CollinearityFilter(BaseFilter):
     def _fit(self, X, y=None):
         notify.entering(__class__.__name__, "_fit") 
         correlations = pd.DataFrame()
-        columns = X[self._numeric].columns.tolist()
+        all_columns = X.columns.tolist()
+        columns = list(set(X.columns.tolist()).intersection(self._numeric))
         
         # Perform pairwise correlation coefficient calculations
         for col_a, col_b in itertools.combinations(columns,2):            
@@ -572,26 +592,28 @@ class CollinearityFilter(BaseFilter):
             r, p = pearsonr(X.loc[:,column], y)
             d = {"Feature": column, "Correlation": r, "p-value": p}
             df = pd.DataFrame(data=d, index=[0])            
+            relevance = pd.concat((relevance,df), axis=0)
 
         # Obtain observations above correlation threshold and below alpha
         self.suspects_ = correlations[(correlations["Correlation"] >= self._threshold) & (correlations["p-value"] <= self._alpha)]
         if self.suspects_.shape[0] == 0:
             self.X_ = X
             return 
-
+        
         # Iterate over suspects and determine column to remove based upon
         # correlation with target
         to_remove = []
         for index, row in self.suspects_.iterrows():
-            if np.abs(relevance[relevance[index] == row["A"]]) > \
-                np.abs(relevance[relevance[index] == row["B"]]):
+            a = np.abs(relevance[relevance["Feature"] == row["A"]]["Correlation"].values)
+            b = np.abs(relevance[relevance["Feature"] == row["B"]]["Correlation"].values)
+            if a > b:
                 to_remove.append(row["B"])
             else:
                 to_remove.append(row["A"])
         
         self.X_ = X.drop(columns=to_remove)
         self.features_removed_ += to_remove
-        self._fit(self.X_)
+        self._fit(self.X_,y)
         notify.leaving(__class__.__name__, "fit_") 
 
     def fit(self, X, y=None):
@@ -602,65 +624,346 @@ class CollinearityFilter(BaseFilter):
         return self
 
     def transform(self, X, y=None):
-        notify.entering(__class__.__name__, "transform") 
-        self._report(X, y)
-        notify.leaving(__class__.__name__, "transform") 
         return self.X_
 
     def fit_transform(self, X, y=None):
         self.fit(X,y)
         return self.transform(X,y)
+# =========================================================================== #
+#                            11. ANOVA FILTER                                 #
+# =========================================================================== # 
+class AnovaFilter(BaseFilter):
+    """Eliminates predictors with equal between means w.r.t response."""
+    def __init__(self, alpha=0.05, ordinal=ordinal, nominal=nominal):
+        self._alpha = alpha
+        self._ordinal = ordinal
+        self._nominal = nominal
+
+    def fit(self, X, y=None):
+        notify.entering(__class__.__name__, "_fit") 
+        results = pd.DataFrame()
+        all_columns = X.columns.tolist()
+        categorical = self._ordinal + self._nominal
+        columns = list(set(X.columns.tolist()).intersection(categorical))  
+
+        # Measure variance between predictor levels w.r.t. the response
+        self.remaining_ = pd.DataFrame()
+        self.features_removed_ = []
+        for column in columns:
+            f, p = f_oneway(X[column], y)
+            if p > self._alpha:
+                self.features_removed_.append(column)
+            else:
+                d = {"Feature": column, "F-statistic": f, "p-value": p}
+                df = pd.DataFrame(data=d, index=[0])
+                self.remaining_ = pd.concat((self.remaining_, df), axis=0)
+                
+
+
+        # Drop features
+        self.X_ = X.drop(columns=self.features_removed_)
+        notify.leaving(__class__.__name__, "_fit") 
+        return self
+    
+    def transform(self, X, y=None):
+        return self.X_
+
+    def fit_transform(self, X, y=None):
+        self.fit(X, y)
+        return self.transform(X, y)
+
+
+# =========================================================================== #
+#                         12. CORRELATION FILTER                              #
+# =========================================================================== # 
+class CorrelationFilter(BaseFilter):
+    """Eliminates predictors that do not have a strong correlation with the response."""
+    def __init__(self, threshold=0.7, alpha=0.05, continuous=continuous, discrete=discrete):
+        self._threshold = threshold
+        self._alpha = alpha
+        self._continuous = continuous
+        self._discrete = discrete
+
+    def fit(self, X, y=None):
+        notify.entering(__class__.__name__, "_fit") 
+        results = pd.DataFrame()
+        all_columns = X.columns.tolist()
+        categorical = self._continuous + self._discrete
+        columns = list(set(X.columns.tolist()).intersection(categorical))  
+
+        # Measure variance between predictor levels w.r.t. the response
+        self.remaining_ = pd.DataFrame()
+        self.features_removed_ = []
+        for column in columns:
+            r, p = pearsonr(X[column], y)
+            if (np.abs(r) <= self._threshold) & (p <= self._alpha):
+                self.features_removed_.append(column)
+            else:
+                d = {"Feature": column, "Correlation": r, "p-value": p}
+                df = pd.DataFrame(data=d, index=[0])
+                self.remaining_ = pd.concat((self.remaining_, df), axis=0)                
+
+        # Drop features
+        self.X_ = X.drop(columns=self.features_removed_)
+        notify.leaving(__class__.__name__, "_fit") 
+        return self
+    
+    def transform(self, X, y=None):
+        return self.X_
+
+    def fit_transform(self, X, y=None):
+        self.fit(X, y)
+        return self.transform(X, y)
+
+# =========================================================================== #
+#                              13. SCORING                                    #
+# =========================================================================== #   
+def RMSE(y_true, y_pred):
+    mse = mean_squared_error(y_true, y_pred)    
+    return np.sqrt(mse)
+rmse = make_scorer(RMSE, greater_is_better=False)
+# =========================================================================== #
+#                         14. MODEL EVALUATOR                                 #
+# =========================================================================== #
+class Evaluator:
+    """Evaluates models, stores scores and returns the best model."""
+
+    def __init__(self, estimators, param_grids, step=1, min_features_to_select=4,cv=5, 
+                 scoring=rmse, n_jobs=2, refit=True, verbose=5, submission=1):
+        self._estimators = estimators
+        self._param_grids = param_grids
+        self._step = step
+        self._min_features_to_select = min_features_to_select
+        self._cv = cv
+        self._scoring = scoring
+        self._n_jobs = n_jobs
+        self._refit = refit
+        self._verbose = verbose
+        self._submission = submission    
+
+    def select_features(self, X, y):
+        self.feature_selection_scores_ = pd.DataFrame()
+        self.selections_ = {}
+
+        # Perform recursive feature elimination
+        selector = RFECV(self.estimator_, self._step, self._cv)
+        selector = selector.fit(X, y)
+        
+        # Extract selected features
+        columns = X.columns.tolist()
+        selected_features = columns[selector.support_]
+        X_selected = X[selected_features]
+
+        # Score the new dataset 
+        score = self.estimator_.score(X_selected, y)        
+
+        # Save the data        
+
+        d = {"Estimator": self.estimator_.__class__.__name__,
+             "Score": score, 
+             "Num Features": selector.n_features_}        
+        df = pd.DataFrame(data=d, index=[0])
+        self.feature_selection_scores_ = pd.concat((self.scores_,df),axis=0)
+        d = {}
+        d["Selected Features"] =  selected_features
+        d["Feature Ranks"] = selector.ranking_
+        d["Score"] = score
+        d["Num Features"] = selector.n_features_
+        self.selections[self.estimator_.__class__.__name__] = d
+        return X_selected, y
+
+    def grid_search(self, X, y):
+        """Performs a gridsearch for the optimal parameters"""
+        self.model_id_ = uuid.uuid4()
+        self.models_ = {}
+        self.scores_ = pd.DataFrame()
+
+        # Run Gridsearch
+        self.model_ = GridSearchCV(estimator=self.estimator_, 
+                            param_grid=self._param_grid,
+                            scoring=self._scoring,
+                            n_jobs=self._n_jobs,
+                            cv=self._cv,
+                            refit=self._refit,
+                            verbose=self._verbose) 
+        # Store model details in dectionary indexed by model id
+        d = {"best_estimator_name": self.model_.best_estimator_.__class__.__name__,
+             "best_estimator": self.model_.best_estimator_,
+             "best_score": self.model_.best_score_,
+             "best_params": self.model_.best_params_,
+             "refit_time": self.model_.refit_time_}
+        self.models_[self.model_id_] = d
+
+        # Track scores in a dataframe for easy sorting later
+        d = {"Model Id": self.model_id_,
+             "Estimator": self.estimator_.__class__.__name__,
+             "Num Features": X.shape[1],
+             "Test Score": score}
+        df = pd.DataFrame(data=d, index=[0])
+        self.scores_ = pd.concat((self.scores_,df),axis=0)             
+    
+    def fit(self, X, y):
+        """Selects the features and fits the model."""
+        X, y = self.select_features(X,y)
+        self.grid_search(X,y)
+        self.model_.fit(X,y)
+
+    def predict(self, X):
+        """Predicts using the best model on new X."""       
+
+        # Extract and drop PID from the test set.
+        PID = X["PID"].values
+        X.drop(columns="PID")
+        
+        # Obtain best scoring model
+        self.scores_.sort_values(by="Test Score", ascending=False, inplace=True)
+        model_id = self.scores_["Model Id"].iloc[0]
+        self.best_model_ = self.models_[model_id]["best_estimator"]       
+
+        # Make Predictions
+        y_pred self.best_model_.predict(X)
+
+        # Concatenate PID and y_pred
+        d = {"PID", PID, "Sale_Price": np.exp(y_pred)}
+        self.submission_ = pd.DataFrame(data=d)
+
+    def submit(self):
+        """Saves submission"""
+        filename = "mysubmission" + self._submission + ".txt"
+        self.submission_.to_csv(filename)
+
+    def summary(self):
+        print(tabulate.tabulate(self.scores_, header="keys"))
+
+    def evaluate(self, X_train, y_train, X_test):
+        for name, self.estimator_ in self._estimators.items():
+            self.fit(X_train, y_train)
+        self.predict(X_test)
+        self.submit()
+
+        self.fit(X_train, y_train)
+
+
 
 # =========================================================================== #
 #                         9. DATA PROCESSING PIPELINE                         #
 # =========================================================================== #
-def preprocess_train(X_train, y_train):
-    # Clean data
-    X_train, y_train = DataCleaner().run(X_train, y_train)
+class DataProcessor:
+    """Performs processing of training and test data."""
+    def __init__(self):
+        pass
 
-    # Screen Data
-    X_train, y_train = DataScreener().run(X_train, y_train)    
-    
-    # Create new features
-    X_train, y_train = FeatureEngineer().run(X_train, y_train)
-    assert(X_train.isnull().sum().sum() == 0), f"{X_train.isnull().sum().sum()} null values after New Features"
+    def _fit_test(X):
 
-    # Transform Target
-    y_train = TargetTransformer().fit_transform(y_train)
+        # Create new features
+        X, y = FeatureEngineer().run(X, y)
+        assert(X.isnull().sum().sum() == 0), f"{X.isnull().sum().sum()} null values after New Features"
 
-    # Continuous     
-    X_train = ContinuousPreprocessor(continuous=continuous).fit(X_train).transform(X_train)    
-    assert(X_train.isnull().sum().sum() == 0), f"{X_train.isnull().sum().sum()} null values after Continuous"
+        # Extract features from training set
+        X = X[self.X_train_.columns]
 
-    # Discrete     
-    X_train = DiscretePreprocessor().fit(X_train).transform(X_train)
-    assert(X_train.isnull().sum().sum() == 0), f"{X_train.isnull().sum().sum()} null values after Discrete"
+        # Continuous     
+        X = ContinuousPreprocessor(continuous=continuous).fit(X).transform(X)    
+        assert(X.isnull().sum().sum() == 0), f"{X.isnull().sum().sum()} null values after Continuous"
 
-    # Ordinal    
-    X_train = OrdinalPreprocessor().fit(X_train).transform(X_train)
-    assert(X_train.isnull().sum().sum() == 0), f"{X_train.isnull().sum().sum()} null values after Ordinal"
+        # Discrete     
+        X = DiscretePreprocessor().fit(X).transform(X)
+        assert(X.isnull().sum().sum() == 0), f"{X.isnull().sum().sum()} null values after Discrete"
 
-    # Nominal    
-    X_train_n = NominalPreprocessor().fit(X_train, y_train).transform(X_train, y_train)        
-    assert(X_train.isnull().sum().sum() == 0), f"{X_train.isnull().sum().sum()} null values after Nominal"
-    
+        # Ordinal    
+        X = OrdinalPreprocessor().fit(X).transform(X)
+        assert(X.isnull().sum().sum() == 0), f"{X.isnull().sum().sum()} null values after Ordinal"
 
-    # Collinearity Filter
-    filter_ = CollinearityFilter(X_train.columns)
-    X_train = filter_.fit(X_train, y_train).transform(X_train, y_train)
-    print(filter_.report())
-
-
-    return X_train, y_train
+        # Nominal    
+        X = NominalPreprocessor().fit(X, y).transform(X, y)        
+        assert(X.isnull().sum().sum() == 0), f"{X.isnull().sum().sum()} null values after Nominal"
         
+        return X
+
+    def _fit_train(X,y=None):
+
+        # Clean data
+        X, y = DataCleaner().run(X, y)
+
+        # Screen Data
+        X, y = DataScreener().run(X, y)    
+        
+        # Create new features
+        X, y = FeatureEngineer().run(X, y)
+        assert(X.isnull().sum().sum() == 0), f"{X.isnull().sum().sum()} null values after New Features"
+
+        # Transform Target        
+        y = TargetTransformer().fit_transform(y)
+
+        # Continuous     
+        X = ContinuousPreprocessor(continuous=continuous).fit(X).transform(X)    
+        assert(X.isnull().sum().sum() == 0), f"{X.isnull().sum().sum()} null values after Continuous"
+
+        # Discrete     
+        X = DiscretePreprocessor().fit(X).transform(X)
+        assert(X.isnull().sum().sum() == 0), f"{X.isnull().sum().sum()} null values after Discrete"
+
+        # Ordinal    
+        X = OrdinalPreprocessor().fit(X).transform(X)
+        assert(X.isnull().sum().sum() == 0), f"{X.isnull().sum().sum()} null values after Ordinal"
+
+        # Nominal    
+        X = NominalPreprocessor().fit(X, y).transform(X, y)        
+        assert(X.isnull().sum().sum() == 0), f"{X.isnull().sum().sum()} null values after Nominal"
+        
+        # Collinearity Filter
+        filta = CollinearityFilter(X.columns)
+        X = filta.fit(X, y).transform(X, y)
+        filta.report(X, y)
+
+        # Correlation Filter
+        filta = CorrelationFilter(threshold=0.7,  alpha=0.05, continuous=continuous, discrete=discrete)
+        X = filta.fit(X, y).transform(X, y)
+        filta.report(X, y)    
+
+        # Anova Filter
+        filta = AnovaFilter(alpha=0.05, ordinal=ordinal, nominal=nominal)
+        X = filta.fit(X, y).transform(X, y)
+        filta.report(X, y)    
+
+        self.X_train_ = X
+        self.y_train_ = y
+        
+        return X, y
+
+    def transform(self, X, y=None):
+        if y:
+            return self.X_train_, self.y_train_
+        else:
+            self._fit_test(X)
+
+    def fit(X,y=None):
+        if y:
+            self._fit_train(X,y)
+        else:
+            self._fit_test(X)        
+
 
 def main():
 
+    # Retain objects
     data = AmesData()
+    evaluator = Evaluator 
     X_train, y_train, X_test = data.get(1)    
 
-    # Preprocess
-    preprocess_train(X_train, y_train)
+    # Preprocess Data
+    processor = DataProcessor()
+    processor.fit(X_train, y_train)
+    X_train, y_train = processor.transform(X,y)
+    processor.fit(X_test)
+    X_test = preprocess_train(X_test)
+
+    # Perform feature selection
+
+
+    
+
+
 
 
 if __name__ == "__main__":
