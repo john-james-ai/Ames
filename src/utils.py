@@ -52,8 +52,10 @@ def check_NaN(X):
             assert(X_nan.shape[0]==0), "The above rows have NaN values."
         
 
-def validate(X, y=None, dtype=None):
+def validate(classname, context, X, y=None, dtype=None):
     """Validates, but does not convert X, y."""
+    message = f"Context: {context}. X shape: {X.shape}. Validation initiated."
+    comment.regarding(classname, message)    
     if isinstance(X, pd.DataFrame):
         check_NaN(X)
         X = X.to_numpy()
@@ -64,14 +66,23 @@ def validate(X, y=None, dtype=None):
     else:
         check_array(X, dtype=dtype)
 
-def convert(X, y, dtype="numeric"):
+    # message = f"Context: {context}. Validation complete!"
+    # comment.regarding(classname, message)        
+
+def convert(classname, context, X, y, dtype="numeric"):
     """Validates and converts X to 2-d array and y to 1d array."""
+    message = f"Context: {context}. X shape: {X.shape}. Conversion initiated."
+    comment.regarding(classname, message)
+
     if isinstance(X, pd.DataFrame):
         check_NaN(X)
         X = X.to_numpy()
     if isinstance(y, pd.DataFrame):
         y = y.values.ravel()
-    return check_X_y(X,y, dtype=dtype)
+    X, y = check_X_y(X,y, dtype=dtype)
+    # message = f"Context: {context}. Validation complete!"
+    # comment.regarding(classname, message)    
+    return X, y
 
 # =========================================================================== #
 #                                 PERSIST                                     #
@@ -250,11 +261,11 @@ class Comment:
     def __init__(self, verbose=True):
         self._verbose = verbose
 
-    def regarding(self, classname, methodname=None, message=None):
+    def regarding(self, classname, message=None):
 
         methodname = methodname or "Not Specified"
         if self._verbose:
-            print(f"\nClass: {classname} Method: {methodname} Message: {message}\n")
+            print(f"\nClass {classname}: {message}\n")
 
 notify = Notify(verbose=True)    
 comment = Comment(verbose=True)

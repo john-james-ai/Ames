@@ -22,17 +22,15 @@ import numpy as np
 from sklearn.preprocessing import OneHotEncoder
 from data import AmesData
 from globals import nominal
-data = AmesData()
-X, y = data.get()
 
-X = X[nominal]
-fn = X.columns
-print(X.shape)
-ohe = OneHotEncoder()
-X = ohe.fit_transform(X)
-print(X.shape)
-print(ohe.categories_)
-print(ohe.get_feature_names(fn))
-X = ohe.inverse_transform(X)
-print(X.shape)
+filepath = "../data/external/Ames_data.csv"
+df = pd.read_csv(filepath)
+df1 = df.select_dtypes(include=[object])
+df2 = df.select_dtypes(exclude=[object])
+print(df1.info())
+print(df2.info())
+print(df.shape[1])
+total = df1.shape[1] + df2.shape[1]
+print(total)
+
 #%%

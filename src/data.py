@@ -20,16 +20,6 @@
 import os
 import pandas as pd
 import numpy as np
-
-from data_processor import ContinuousPreprocessor, CategoricalPreprocessor
-from data_processor import DiscretePreprocessor, OrdinalEncoder, TargetTransformer
-from data_processor import DataScreener, DataAugmentor, DataCleaner
-from utils import notify, validate, comment
-
-pd.set_option('display.max_rows', None)
-pd.set_option('display.max_columns', None)
-pd.set_option('display.width', None)
-pd.set_option('display.max_colwidth', None)
 # =========================================================================== #
 #                              AMES DATA                                      #
 # =========================================================================== #   
@@ -39,81 +29,33 @@ class AmesData:
         self._raw_directory = "../data/raw/"
         self._train_directory = "../data/training/"
         self._processed_directory = "../data/processed/"
+        self._cv_directory = "../data/cv/"
         self._X_filename = "X_train.csv"
         self._y_filename = "y_train.csv"
+        self._index = [np.random.randint(1, 11) for p in range(0, 10)]
+        self._next_index = 0
         
-    
-    def process(self, X, y, **transform_params):
-        """Screens, preprocesses and transforms the data."""
-        notify.entering(__class__.__name__, "process")
-
-        # Clean data 
-        cleaner = DataCleaner()
-        X, y = cleaner.run(X,y)
-        
-        # Screen data of outliers and non-informative features
-        screener = DataScreener()
-        X, y = screener.run(X, y)        
-
-        # Perform data augmentation
-        augmentor = DataAugmentor()
-        X, y = augmentor.run(X, y)      
-
-        # Transform Target
-        x4mr = TargetTransformer()
-        x4mr.fit(y)                    
-        y = x4mr.transform(y)    
-
-        # Validate data
-        message = "Pending validation of data after cleaning, screening and augmentation"
-        comment.regarding(__class__.__name__, "process", message)
-        validate(X,y)    
-        message = "Completed validation of data after cleaning, screening and augmentation"
-        comment.regarding(__class__.__name__, "process", message)        
-
-        # Execute feature preprocessors
-        preprocessors = [ContinuousPreprocessor(), 
-                         CategoricalPreprocessor(), DiscretePreprocessor(),
-                         OrdinalEncoder()]        
-        for preprocessor in preprocessors:
-            x4mr = preprocessor
-            x4mr.fit(X, y)
-            X = x4mr.transform(X)
-
-        # Validate data
-        message = "Pending validation of data after preprocessing"
-        comment.regarding(__class__.__name__, "process", message)
-        validate(X,y)    
-        message = "Completed validation of data after preprocessing"
-        comment.regarding(__class__.__name__, "process", message)        
-
-        # Save data
-        X_filepath = self._processed_directory + self._X_filename
-        y_filepath = self._processed_directory + self._y_filename
-        X.to_csv(X_filepath)
-        y.to_csv(y_filepath)
-
-        notify.leaving(__class__.__name__, "process")        
-        return X, y
-
-    def get(self, force=False):
+    def get(self, idx=None):
         """Obtains processed data if extant, otherwise, processes raw data"""
-        X_filepath = self._processed_directory + self._X_filename
-        if os.path.exists(X_filepath) and not force:
-            y_filepath = self._processed_directory + self._y_filename
-            X = pd.read_csv(X_filepath)
-            y = pd.read_csv(y_filepath)
-        else:
-            X_filepath = self._raw_directory + self._X_filename
-            y_filepath = self._raw_directory + self._y_filename
-            X = pd.read_csv(X_filepath)
-            y = pd.read_csv(y_filepath)
-            X, y = self.process(X,y)
+        idx = self._index[self._next_index]
+        train_filepath = self._cv_directory + str(idx) + "_train.csv"
+        test_filepath = self._cv_directory + str(idx) + "_test.csv"
         
-        return X, y
-#%%
-        
+        train = pd.read_csv(train_filepath)
+        X_train = train.drop(columns=["Sale_Price"])
+        y_train = train["Sale_Price"]
 
+        X_test = pd.read_csv(test_filepath)
+        self._next_index = self._next_index + 1 if self._next_index < 10 else 0 
 
+        assert(X_train.shape[0]==y_train.shape[0]), f"X_train and y_train mismatched lengths {X_train.shape[0]} and {y_train.shape[0]}, respectively."        
 
+        return X_train, y_train, X_test
 
+def main():
+    data = AmesData()
+    X_train, y_train, X_test = data.get()
+
+if __name__ == "__main__":
+    main()        
+#%%    

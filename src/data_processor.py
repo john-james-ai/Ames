@@ -73,7 +73,7 @@ pd.set_option('display.width', None)
 pd.set_option('display.max_colwidth', None)
 
 # =========================================================================== #
-#                          1. DATA CLEARNER                                   #
+#                          1. DATA CLEANER                                    #
 # =========================================================================== #  
 class DataCleaner:
     def __init__(self):
@@ -88,8 +88,8 @@ class DataCleaner:
 #                          2. DATA SCREENER                                   #
 # =========================================================================== #    
 class DataScreener:
-    def __init__(self, ordinal_map=ordinal_map):
-        self._ordinal_map = ordinal_map
+    def __init__(self):
+        pass
 
     def run(self, X, y=None, **fit_params):
         notify.entering(__class__.__name__, "run")
@@ -109,9 +109,9 @@ class DataScreener:
         return X, y
 
 # =========================================================================== #
-#                         3. DATA AUGMENTATION                                #
+#                         3. FEATURE ENGINEERING                              #
 # =========================================================================== #    
-class DataAugmentor:
+class FeatureEngineer:
     def __init__(self):
         pass
     def run(self, X, y=None):
@@ -124,44 +124,71 @@ class DataAugmentor:
         X["Garage_Age"] = X["Year_Sold"] - X["Garage_Yr_Blt"]
         X["Garage_Age"].fillna(value=0,inplace=True)        
 
-
-
-
         notify.leaving(__class__.__name__, "run")
         return X, y
 
 
 
 # =========================================================================== #
-#                        4. DATA PREPROCESSING                                #
+#                      4. CONTINUOUS  PREPROCESSING                           #
 # =========================================================================== #
 class ContinuousPreprocessor(BaseEstimator, TransformerMixin):
-    def __init__(self):
-        pass
+    def __init__(self, continuous=continuous):
+        self._continuous = continuous
 
     def fit(self, X, y=None, **fit_params):
         return self
     
     def transform(self, X,  **transform_params):       
         notify.entering(__class__.__name__, "transform")
-        # Create imputer and power transformer objects
+        # Impute missing values as linear function of other features
         imputer = IterativeImputer()
-        power = PowerTransformer(method="yeo-johnson", standardize=True)
-        
-        # Perform imputation of continuous variables
-        X[continuous] = imputer.fit_transform(X[continuous])
+        X[self._continuous] = imputer.fit_transform(X[self._continuous])
 
-        # Perform power transformations to make data closer to Guassian distribution
-        # Data is standardized as well
-        X[continuous] = power.fit_transform(X[continuous])
+        # Power transformation to make feature distributions closer to Guassian
+        power = PowerTransformer(method="yeo-johnson", standardize=False)
+        X[self._continuous] = power.fit_transform(X[self._continuous])
 
         notify.leaving(__class__.__name__, "transform")
         
         return X
-# --------------------------------------------------------------------------- #
-class CategoricalPreprocessor(BaseEstimator, TransformerMixin):
-    def __init__(self):
-        pass
+# =========================================================================== #
+#                        5. DISCRETE PREPROCESSING                            #
+# =========================================================================== #
+class DiscretePreprocessor(BaseEstimator, TransformerMixin):
+    def __init__(self, strategy="mean", discrete=discrete):
+        self._strategy = strategy
+        self._discrete = discrete
+
+    def fit(self, X, y=None, **fit_params):
+        return self
+    
+    def transform(self, X,  **transform_params):       
+        notify.entering(__class__.__name__, "transform")
+        # Missing discrete variables will be imputed according to the strategy provided
+        # Default strategy is the mean.
+        imputer = SimpleImputer(strategy=self._strategy)
+        X[self._discrete] = imputer.fit_transform(X[self._discrete])
+
+        # Standardize discrete variables to zero mean and unit variance
+        scaler = StandardScaler()        
+        X[self._discrete] = scaler.fit_transform(X[self._discrete])
+        
+        notify.leaving(__class__.__name__, "transform")
+
+        return X        
+
+
+# =========================================================================== #
+#                        6. ORDINAL PREPROCESSING                             #
+# =========================================================================== #
+class OrdinalPreprocessor(BaseEstimator, TransformerMixin):
+    def __init__(self, strategy="most_frequent", ordinal=ordinal, 
+        ordinal_map=ordinal_map, encoder=OrdinalMapEncoder()):
+        self._strategy = strategy
+        self._ordinal = ordinal
+        self._ordinal_map = ordinal_map
+        self._encoder = encoder
 
     def fit(self, X, y=None, **fit_params):
         return self
@@ -178,108 +205,8 @@ class CategoricalPreprocessor(BaseEstimator, TransformerMixin):
         notify.leaving(__class__.__name__, "transform")
         
         return X        
-# --------------------------------------------------------------------------- #
-class DiscretePreprocessor(BaseEstimator, TransformerMixin):
-    def __init__(self):
-        pass
-
-    def fit(self, X, y=None, **fit_params):
-        return self
-    
-    def transform(self, X,  **transform_params):       
-        notify.entering(__class__.__name__, "transform")
-        # Create imputer and scaler objects
-        imputer = SimpleImputer(strategy="mean")
-        scaler = StandardScaler()        
-        
-        # Perform imputation of discrete variables to most frequent
-        X[discrete] = imputer.fit_transform(X[discrete])
-        X[discrete] = scaler.fit_transform(X[discrete])
-        
-        notify.leaving(__class__.__name__, "transform")
-
-        return X        
-
-
 # =========================================================================== #
-#                            5. ENCODERS                                      #
-# =========================================================================== #
-class OrdinalEncoder(BaseEstimator, TransformerMixin):
-    def __init__(self, ordinal_map=ordinal_map):
-        self._ordinal_map = ordinal_map
-
-    def fit(self, X, y=None, **fit_params):
-        return self
-    
-    def transform(self, X,  **transform_params):       
-        notify.entering(__class__.__name__, "transform")
-        for variable, mappings in self._ordinal_map.items():
-            for k,v in mappings.items():
-                X[variable].replace({k:v}, inplace=True)       
-
-        # Scale data as continuous 
-        scaler = StandardScaler()        
-        X[ordinal] = scaler.fit_transform(X[ordinal])   
-
-        notify.leaving(__class__.__name__, "transform")                  
-
-        return X
-# --------------------------------------------------------------------------- #
-class NominalEncoder(BaseEstimator, TransformerMixin):
-    """Accepts nominal features (only) and converts to One-Hot representation."""
-    
-    def __init__(self):        
-        pass
-
-    def fit(self, X, y=None, **fit_params):
-        notify.entering(__class__.__name__, "fit")
-        self.original_features_ = X.columns.tolist()
-        self.ohe_ = OneHotEncoder()
-        self.ohe_.fit(X)
-        notify.leaving(__class__.__name__, "fit")
-        return self
-    
-    def transform(self, X,  **transform_params):       
-        """Converting nominal variables to one-hot representation."""        
-        notify.entering(__class__.__name__, "transform")
-
-        self.X_ = self.ohe_.transform(X).toarray()
-        self.transformed_features_ = self.ohe_.get_feature_names(self.original_features_).tolist()        
-        self.X_df_ = pd.DataFrame(self.X_, columns=self.transformed_features_)
-        self.to_original_ = {}
-        self.to_transformed_ = {}
-        
-        for i in self.transformed_features_:
-            for j in self.original_features_:
-                self.to_transformed_[j] = self.to_transformed_[j] or []  
-                if j in i:
-                    self.to_original_[i] = j
-                    self.to_transformed_[j].append(i)
-                    break        
-
-        notify.leaving(__class__.__name__, "transform")
-        return self.X_df_ 
-        
-    def inverse_transform(self, X,  **transform_params):               
-        return self.ohe_.inverse_transform(X)
-
-    def get_original(self, transformed):
-        original = []
-        for i in transformed:            
-            for k,v in self.to_original_.items():
-                if i == k:
-                    original.append(v)
-                    break
-        return original
-
-    def get_transformed(self, original):
-        transformed = []
-        for i in original:
-            transformed += self.to_transformed_[i]            
-        return transformed
-
-# =========================================================================== #
-#                          6. TARGET TRANSFORMER                              #
+#                          7. TARGET TRANSFORMER                              #
 # =========================================================================== #
 class TargetTransformer(BaseEstimator, TransformerMixin):
     
@@ -303,4 +230,156 @@ class TargetTransformer(BaseEstimator, TransformerMixin):
         df = pd.DataFrame(data=d)
         notify.leaving(__class__.__name__, "inverse_transform")        
         return df
+
+# =========================================================================== #
+#                         8. ORDINAL ENCODER                                  #
+# =========================================================================== #
+class OrdinalMapEncoder(BaseEstimator, TransformerMixin):
+    def __init__(self, ordinal_map=ordinal_map):
+        self._ordinal_map = ordinal_map
+
+    def fit(self, X, y=None, **fit_params):
+        return self
+    
+    def transform(self, X,  **transform_params):       
+        notify.entering(__class__.__name__, "transform")
+        for variable, mappings in self._ordinal_map.items():
+            for k,v in mappings.items():
+                X[variable].replace({k:v}, inplace=True)       
+
+        # Scale data as continuous 
+        scaler = StandardScaler()        
+        X[ordinal] = scaler.fit_transform(X[ordinal])   
+
+        notify.leaving(__class__.__name__, "transform")                  
+
+        return X
+# =========================================================================== #
+#                         9. ONEHOT ENCODER                                   #
+# =========================================================================== #
+class HotOneEncoder(BaseEstimator, TransformerMixin):
+    """Accepts nominal features (only) and converts to One-Hot representation."""
+    
+    def __init__(self):        
+        pass
+
+    def fit(self, X, y=None, **fit_params):
+        notify.entering(__class__.__name__, "fit")
+        self.original_features_ = X.columns.tolist()
+        self.ohe_ = OneHotEncoder(handle_unknown="ignore")
+        self.ohe_.fit(X)
+        notify.leaving(__class__.__name__, "fit")
+        return self
+    
+    def transform(self, X,  **transform_params):       
+        """Converting nominal variables to one-hot representation."""        
+        notify.entering(__class__.__name__, "transform")
+
+        self.X_ = self.ohe_.transform(X).toarray()
+        self.transformed_features_ = self.ohe_.get_feature_names(self.original_features_).tolist()        
+        self.X_df_ = pd.DataFrame(self.X_, columns=self.transformed_features_)
+        self.to_original_ = {}
+        
+        for i in self.transformed_features_:
+            for j in self.original_features_:
+                if j in i:
+                    self.to_original_[i] = j
+                    break        
+
+        notify.leaving(__class__.__name__, "transform")
+        return self.X_ 
+        
+    def inverse_transform(self, X,  **transform_params):               
+        return self.ohe_.inverse_transform(X)
+
+    def get_original(self, transformed):
+        original = []
+        for i in transformed:            
+            for k,v in self.to_original_.items():
+                if i == k:
+                    original.append(v)
+                    break
+        return original
+
+# =========================================================================== #
+#                       10. ORDINAL ENCODER (SKL)                             #
+# =========================================================================== #
+class OrdinalEncoderSKL(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        pass
+
+    def fit(self, X, y=None, **fit_params):
+        from sklearn.preprocessing import OrdinalEncoder
+        self._enc = OrdinalEncoder(handle_unknown="use_encoded_value",
+                                    unknown_value="unknown")
+        self._enc.fit(X)
+        return self
+    
+    def transform(self, X,  **transform_params):       
+        notify.entering(__class__.__name__, "transform")
+        notify.leaving(__class__.__name__, "transform")                  
+
+        return self._enc.transform(X)
+
+# =========================================================================== #
+#                         11. MEAN ENCODER                                    #
+# =========================================================================== #
+class MeanEncoder(BaseEstimator, TransformerMixin):
+    def __init__(self, l1o=True, discrete=discrete):
+        self._l1o = l1o
+        self._discrete = discrete
+
+    def _fit_column(self, X, y=None, **fit_params):
+        fq = df.groupby('columnName').size()/len(df)    
+        df.loc[:, "{}_freq_encode".format('columnName')] = df['columnName'].map(fq)   
+        df = df.drop(['columnName'], axis = 1)          
+        
+        return self
+    
+    def transform(self, X,  **transform_params):       
+        notify.entering(__class__.__name__, "transform")
+        notify.leaving(__class__.__name__, "transform")                  
+
+        return self._enc.transform(X)
+
+# =========================================================================== #
+#                          9. PREPROCESSOR                                    #
+# =========================================================================== #
+class PreProcessor(BaseEstimator, TransformerMixin):
+
+    def __init__(self):
+        pass
+
+    def fit(self, X, y=None):   
+        # Clean data 
+        cleaner = DataCleaner()
+        X, y = cleaner.run(X,y)
+        
+        # Screen data of outliers and non-informative features
+        screener = DataScreener()
+        X, y = screener.run(X, y)        
+
+        # Perform data augmentation
+        augmentor = DataAugmentor()
+        X, y = augmentor.run(X, y)      
+
+        # Transform Target
+        x4mr = TargetTransformer()
+        x4mr.fit(y)                    
+        self.y_ = x4mr.transform(y)          
+
+        # Execute feature preprocessors
+        preprocessors = [ContinuousPreprocessor(), 
+                         CategoricalPreprocessor(), DiscretePreprocessor(),
+                         OrdinalEncoder()]        
+        for preprocessor in preprocessors:
+            x4mr = preprocessor
+            x4mr.fit(X, y)
+            self.X_ = x4mr.transform(X)
+
+        return self
+    
+    def transform(self, X):
+        return self.X_, self.y_        
+
 

@@ -29,9 +29,10 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 from tabulate import tabulate
 import pprint
 
-from globals import nominal
+from globals import nominal, ordinal_map
 from data import AmesData
 from tabulate import tabulate
+import pprint
 
 # =========================================================================== #
 #                        CATEGORICAL FEATURE METADATA                         #
@@ -200,11 +201,35 @@ def find_NAs(X):
         df['Garage'] = np.where(df, 'Garage', 'No Garage')
         print(np.unique(df['Garage'], return_counts=True))
 
-def main():
+def check_unique():
     filepath = "../data/external/Ames_data.csv"
     X = pd.read_csv(filepath)
-    describe(X)
-
+    df = X.select_dtypes(include=[object])
+    cols = {}
+    counts = {}
+    for column in df.columns:
+        if column in ordinal_map.keys():
+            dtype = "(Ordinal)"
+            values = df[column].unique()
+            print(f"Column: {column} {dtype}")
+            for value in values:
+                count = df[df[column]==value].shape[0]
+                if value in ordinal_map[column].keys():
+                    n_value = ordinal_map[column][value]                    
+                    print(f"   {n_value}: {value}  Count: {count}")
+                else:
+                    print(f"   {value} Count: {count} Missing from ordinal map")
+        else:
+            dtype = "(Nominal)"
+            print(f"Column: {column} {dtype}")
+            values = df[column].unique()
+            for value in values:
+                count = df[df[column]==value].shape[0]
+                print(f"   {value} Count: {count}")
+        print("\n\n")
+def main():
+    check_unique()
+    
 
 if __name__ == "__main__":
     main()

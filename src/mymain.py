@@ -21,8 +21,10 @@
 # =========================================================================== #
 #%%
 # System and python libraries
+from abc import ABC, abstractmethod
 import datetime
 import glob
+import itertools
 from joblib import dump, load
 import os
 import pickle
@@ -31,6 +33,7 @@ from collections import OrderedDict
 import numpy as np
 import pandas as pd
 import scipy as sp
+from scipy.stats.stats import pearsonr
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.experimental import enable_iterative_imputer
@@ -38,9 +41,11 @@ from sklearn.impute import IterativeImputer, SimpleImputer
 from sklearn.neighbors import LocalOutlierFactor
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 from sklearn.preprocessing import OneHotEncoder, PowerTransformer
+from category_encoders import TargetEncoder
 
 # Feature and model selection and evaluation
-from sklearn.feature_selection import RFE, SelectKBest, mutual_info_regression
+from sklearn.feature_selection import RFECV, SelectKBest, mutual_info_regression
+from sklearn.feature_selection import VarianceThreshold
 from sklearn.metrics import make_scorer
 from sklearn.model_selection import KFold
 from sklearn.pipeline import make_pipeline, Pipeline, FeatureUnion
@@ -61,10 +66,603 @@ import matplotlib.pyplot as plt
 from tabulate import tabulate
 
 # Utilities
-from utils import Notify, Persist
+from utils import notify, Persist, comment
+
+# Data Source
+from data import AmesData
+
+
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', None)
+pd.set_option('display.max_colwidth', None)
+# =========================================================================== #
+#                                 COLUMNS                                     #
+# =========================================================================== #
+discrete =  ["PID", "Year_Built","Year_Remod_Add","Bsmt_Full_Bath","Bsmt_Half_Bath",
+    "Full_Bath","Half_Bath","Bedroom_AbvGr","Kitchen_AbvGr","TotRms_AbvGrd",
+    "Fireplaces","Garage_Cars","Mo_Sold","Year_Sold","Age", "Garage_Age", "Garage_Yr_Blt"]
+continuous = ["Lot_Frontage","Lot_Area","Mas_Vnr_Area","BsmtFin_SF_1","BsmtFin_SF_2",
+    "Bsmt_Unf_SF","Total_Bsmt_SF","First_Flr_SF","Second_Flr_SF","Low_Qual_Fin_SF",
+    "Gr_Liv_Area","Garage_Area","Wood_Deck_SF","Open_Porch_SF","Enclosed_Porch",
+    "Three_season_porch","Screen_Porch","Pool_Area","Misc_Val"]
+numeric = discrete + continuous
+
+n_nominal_levels = 191
+nominal = ['MS_SubClass', 'MS_Zoning', 'Street', 'Alley', 'Land_Contour', 'Lot_Config', 'Neighborhood',
+ 'Condition_1', 'Condition_2', 'Bldg_Type', 'House_Style', 'Roof_Style', 'Roof_Matl',
+ 'Exterior_1st', 'Exterior_2nd', 'Mas_Vnr_Type', 'Foundation', 'Heating', 'Central_Air',
+ 'Garage_Type', 'Misc_Feature', 'Sale_Type', 'Sale_Condition']
+
+ordinal = ['BsmtFin_Type_1', 'BsmtFin_Type_2', 'Bsmt_Cond', 'Bsmt_Exposure', 
+'Bsmt_Qual', 'Electrical', 'Exter_Cond', 'Exter_Qual', 'Fence', 'Fireplace_Qu', 
+'Functional', 'Garage_Cond', 'Garage_Finish', 'Garage_Qual', 'Heating_QC', 'Kitchen_Qual', 
+'Land_Slope', 'Lot_Shape', 'Overall_Cond', 'Overall_Qual', 'Paved_Drive', 'Pool_QC', 'Utilities']
+
+pre_features = ['PID', 'MS_SubClass', 'MS_Zoning', 'Lot_Frontage', 'Lot_Area', 'Street',
+       'Alley', 'Lot_Shape', 'Land_Contour', 'Utilities', 'Lot_Config',
+       'Land_Slope', 'Neighborhood', 'Condition_1', 'Condition_2', 'Bldg_Type',
+       'House_Style', 'Overall_Qual', 'Overall_Cond', 'Year_Built',
+       'Year_Remod_Add', 'Roof_Style', 'Roof_Matl', 'Exterior_1st',
+       'Exterior_2nd', 'Mas_Vnr_Type', 'Mas_Vnr_Area', 'Exter_Qual',
+       'Exter_Cond', 'Foundation', 'Bsmt_Qual', 'Bsmt_Cond', 'Bsmt_Exposure',
+       'BsmtFin_Type_1', 'BsmtFin_SF_1', 'BsmtFin_Type_2', 'BsmtFin_SF_2',
+       'Bsmt_Unf_SF', 'Total_Bsmt_SF', 'Heating', 'Heating_QC', 'Central_Air',
+       'Electrical', 'First_Flr_SF', 'Second_Flr_SF', 'Low_Qual_Fin_SF',
+       'Gr_Liv_Area', 'Bsmt_Full_Bath', 'Bsmt_Half_Bath', 'Full_Bath',
+       'Half_Bath', 'Bedroom_AbvGr', 'Kitchen_AbvGr', 'Kitchen_Qual',
+       'TotRms_AbvGrd', 'Functional', 'Fireplaces', 'Fireplace_Qu',
+       'Garage_Type', 'Garage_Yr_Blt', 'Garage_Finish', 'Garage_Cars',
+       'Garage_Area', 'Garage_Qual', 'Garage_Cond', 'Paved_Drive',
+       'Wood_Deck_SF', 'Open_Porch_SF', 'Enclosed_Porch', 'Three_season_porch',
+       'Screen_Porch', 'Pool_Area', 'Pool_QC', 'Fence', 'Misc_Feature',
+       'Misc_Val', 'Mo_Sold', 'Year_Sold', 'Sale_Type', 'Sale_Condition',
+       'Longitude', 'Latitude']
+post_features = ['PID', 'MS_SubClass', 'MS_Zoning', 'Lot_Frontage', 'Lot_Area', 'Street',
+       'Alley', 'Lot_Shape', 'Land_Contour', 'Utilities', 'Lot_Config',
+       'Land_Slope', 'Neighborhood', 'Condition_1', 'Condition_2', 'Bldg_Type',
+       'House_Style', 'Overall_Qual', 'Overall_Cond', 'Year_Built',
+       'Year_Remod_Add', 'Roof_Style', 'Roof_Matl', 'Exterior_1st',
+       'Exterior_2nd', 'Mas_Vnr_Type', 'Mas_Vnr_Area', 'Exter_Qual',
+       'Exter_Cond', 'Foundation', 'Bsmt_Qual', 'Bsmt_Cond', 'Bsmt_Exposure',
+       'BsmtFin_Type_1', 'BsmtFin_SF_1', 'BsmtFin_Type_2', 'BsmtFin_SF_2',
+       'Bsmt_Unf_SF', 'Total_Bsmt_SF', 'Heating', 'Heating_QC', 'Central_Air',
+       'Electrical', 'First_Flr_SF', 'Second_Flr_SF', 'Low_Qual_Fin_SF',
+       'Gr_Liv_Area', 'Bsmt_Full_Bath', 'Bsmt_Half_Bath', 'Full_Bath',
+       'Half_Bath', 'Bedroom_AbvGr', 'Kitchen_AbvGr', 'Kitchen_Qual',
+       'TotRms_AbvGrd', 'Functional', 'Fireplaces', 'Fireplace_Qu',
+       'Garage_Type', 'Garage_Yr_Blt', 'Garage_Finish', 'Garage_Cars',
+       'Garage_Area', 'Garage_Qual', 'Garage_Cond', 'Paved_Drive',
+       'Wood_Deck_SF', 'Open_Porch_SF', 'Enclosed_Porch', 'Three_season_porch',
+       'Screen_Porch', 'Pool_Area', 'Pool_QC', 'Fence', 'Misc_Feature',
+       'Misc_Val', 'Mo_Sold', 'Year_Sold', 'Sale_Type', 'Sale_Condition',
+       'Age', 'Garage_Age']
+# =========================================================================== #
+#                              ORDINAL MAP                                    #
+# =========================================================================== #
+ordinal_map = {'BsmtFin_Type_1': {'ALQ': 5, 'BLQ': 4, 'GLQ': 6, 'LwQ': 2, 'No_Basement': 0, 'Rec': 3, 'Unf': 1},
+ 'BsmtFin_Type_2': {'ALQ': 5, 'BLQ': 4, 'GLQ': 6, 'LwQ': 2, 'No_Basement': 0, 'Rec': 3, 'Unf': 1},
+ 'Bsmt_Cond': {'Excellent': 5, 'Fair': 2, 'Good': 4, 'No_Basement': 0, 'Poor': 1, 'Typical': 3},
+ 'Bsmt_Exposure': {'Av': 3, 'Gd': 4, 'Mn': 2, 'No': 1, 'No_Basement': 0},
+ 'Bsmt_Qual': {'Excellent': 5, 'Fair': 2, 'Good': 4, 'No_Basement': 0, 'Poor': 1, 'Typical': 3},
+ 'Electrical': {'FuseA': 4, 'FuseF': 2, 'FuseP': 1, 'Mix': 0, 'SBrkr': 5, 'Unknown': 3},
+ 'Exter_Cond': {'Excellent': 4, 'Fair': 1, 'Good': 3, 'Poor': 0, 'Typical': 2},
+ 'Exter_Qual': {'Excellent': 4, 'Fair': 1, 'Good': 3, 'Poor': 0, 'Typical': 2},
+ 'Fence': {'Good_Privacy': 4, 'Good_Wood': 2, 'Minimum_Privacy': 3, 'Minimum_Wood_Wire': 1,'No_Fence': 0},
+ 'Fireplace_Qu': {'Excellent': 5, 'Fair': 2, 'Good': 4, 'No_Fireplace': 0, 'Poor': 1, 'Typical': 3},
+ 'Functional': {'Maj1': 3, 'Maj2': 2, 'Min1': 5, 'Min2': 6, 'Mod': 4, 'Sal': 0, 'Sev': 1, 'Typ': 7},
+ 'Garage_Cond': {'Excellent': 5, 'Fair': 2, 'Good': 4, 'No_Garage': 0, 'Poor': 1, 'Typical': 3},
+ 'Garage_Finish': {'Fin': 3, 'No_Garage': 0, 'RFn': 2, 'Unf': 1},
+ 'Garage_Qual': {'Excellent': 5, 'Fair': 2, 'Good': 4, 'No_Garage': 0, 'Poor': 1, 'Typical': 3},
+ 'Heating_QC': {'Excellent': 4, 'Fair': 1, 'Good': 3, 'Poor': 0, 'Typical': 2},
+ 'Kitchen_Qual': {'Excellent': 4, 'Fair': 1, 'Good': 3, 'Poor': 0, 'Typical': 2},
+ 'Land_Slope': {'Gtl': 0, 'Mod': 1, 'Sev': 2},
+ 'Lot_Shape': {'Irregular': 0, 'Moderately_Irregular': 1, 'Regular': 3, 'Slightly_Irregular': 2},
+ 'Overall_Cond': {'Above_Average': 5, 'Average': 4,'Below_Average': 3,'Excellent': 8,'Fair': 2,
+                  'Good': 6,'Poor': 1,'Very_Excellent': 9,'Very_Good': 7,'Very_Poor': 0},
+ 'Overall_Qual': {'Above_Average': 5,'Average': 4,'Below_Average': 3,'Excellent': 8,'Fair': 2,
+                  'Good': 6,'Poor': 1,'Very_Excellent': 9,'Very_Good': 7,'Very_Poor': 0},
+ 'Paved_Drive': {'Dirt_Gravel': 0, 'Partial_Pavement': 1, 'Paved': 2},
+ 'Pool_QC': {'Excellent': 4, 'Fair': 1, 'Good': 3, 'No_Pool': 0, 'Typical': 2},
+ 'Utilities': {'AllPub': 2, 'NoSeWa': 0, 'NoSewr': 1}}
+
+# =========================================================================== #
+#                                ESTIMATORS                                   #
+# =========================================================================== #
+regressors = {}
+regressors.update({"Linear Regression": LinearRegression()})
+regressors.update({"Lasso": Lasso()})
+regressors.update({"Ridge": Ridge()})
+regressors.update({"ElasticNet": ElasticNet()})
+
+ensembles = {}
+ensembles.update({"AdaBoost": AdaBoostRegressor()})
+ensembles.update({"Bagging": BaggingRegressor()})
+ensembles.update({"Extra Trees": ExtraTreesRegressor()})
+ensembles.update({"Gradient Boosting": GradientBoostingRegressor()})
+ensembles.update({"Random Forest": RandomForestRegressor()})
+ensembles.update({"Histogram Gradient Boosting": HistGradientBoostingRegressor()})
+
+
+# =========================================================================== #
+#                             HYPERPARAMETERS                                 #
+# =========================================================================== #
+# Parameter Grid
+regressor_parameters = {}
+regressor_parameters.update({"Linear Regression":{"estimator__normalize": [False]}})
+regressor_parameters.update({"Lasso": {
+    "estimator__alpha": [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.25, 0.50, 0.75, 1.0],
+    "estimator__n_jobs": [-1]}})
+regressor_parameters.update({"Ridge":{
+        "estimator__alpha": [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.25, 0.50, 0.75, 1.0],
+        "estimator__n_jobs": [-1]}})        
+regressor_parameters.update({"ElasticNet":{
+        "estimator__alpha": [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.25, 0.50, 0.75, 1.0],
+        "estimator__l1_ratio": np.arange(0.0,1.0,0.1),
+        "estimator__n_jobs": [-1]}})        
+
+ensemble_parameters = {}
+ensemble_parameters.update({"AdaBoost": {
+        "estimator__base_estimator": None,
+        "estimator__n_estimators": [50,100],
+        "estimator__learning_rate": [0.001, 0.01, 0.05, 0.1, 0.25, 0.50, 0.75, 1.0]}})
+ensemble_parameters.update({"Bagging": {
+        "estimator__base_estimator": None,
+        "estimator__n_estimators": [50,100],
+        "estimator__max_features": [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        "estimator__n_jobs": [-1]}}) 
+ensemble_parameters.update({"Extra Trees": {        
+        "estimator__n_estimators": [50,100],
+        "estimator__max_depth": [2,3,4,5,6],
+        "estimator__min_samples_split": [0.005, 0.01, 0.05, 0.10],
+        "estimator__min_samples_leaf": [0.005, 0.01, 0.05, 0.10],
+        "estimator__max_features": ["auto", "sqrt", "log2"],
+        "estimator__n_jobs": [-1]}})         
+ensemble_parameters.update({"Gradient Boosting": {        
+        "estimator__learning_rate": [0.15,0.1,0.05,0.01,0.005,0.001],
+        "estimator__n_estimators": [50,100],
+        "estimator__max_depth": [2,3,4,5,6],
+        "estimator__criterion": ["mse"],
+        "estimator__min_samples_split": [0.005, 0.01, 0.05, 0.10],
+        "estimator__min_samples_leaf": [0.005, 0.01, 0.05, 0.10],
+        "estimator__max_features": ["auto", "sqrt", "log2"]}})                        
+ensemble_parameters.update({"Random Forest": {        
+        "estimator__n_estimators": [50,100],
+        "estimator__max_depth": [2,3,4,5,6],
+        "estimator__criterion": ["mse"],
+        "estimator__min_samples_split": [0.005, 0.01, 0.05, 0.10],
+        "estimator__min_samples_leaf": [0.005, 0.01, 0.05, 0.10],
+        "estimator__max_features": ["auto", "sqrt", "log2"],
+        "estimator__n_jobs": [-1]}})      
+ensemble_parameters.update({"Histogram Gradient Boosting": {  
+        "estimator__learning_rate": [0.15,0.1,0.05,0.01,0.005,0.001],              
+        "estimator__max_depth": [2,3,4,5,6],        
+        "estimator__min_samples_leaf": [0.005, 0.01, 0.05, 0.10]}})       
+
+
+
+# =========================================================================== #
+#                          1. DATA CLEANER                                    #
+# =========================================================================== #  
+class DataCleaner:
+    def __init__(self):
+        pass
+    def run(self, X, y=None):
+        X.replace(to_replace="NA", value=np.NaN, inplace=True)
+        X["Garage_Yr_Blt"].replace(to_replace=2207, value=2007, inplace=True)
+        return X, y
+
+# =========================================================================== #
+#                          2. DATA SCREENER                                   #
+# =========================================================================== #    
+class DataScreener:
+    def __init__(self):
+        pass
+
+    def run(self, X, y=None, **fit_params):
+        notify.entering(__class__.__name__, "run")
+
+        # Remove longitude and latitude
+        X = X.drop(columns=["Latitude", "Longitude"])
+
+        # Remove outliers 
+        idx = X[(X["Gr_Liv_Area"] <= 4000) & (X["Garage_Yr_Blt"]<=2010)].index.tolist()
+        X = X.iloc[idx]
+        y = y.iloc[idx]
+
+        notify.leaving(__class__.__name__, "run")
+        return X, y     
+
+# =========================================================================== #
+#                         3. FEATURE ENGINEERING                              #
+# =========================================================================== #    
+class FeatureEngineer:
+    def __init__(self):
+        pass
+    def run(self, X, y=None):
+        notify.entering(__class__.__name__, "run")
+        # Add an age feature and remove year built
+        X["Age"] = X["Year_Sold"] - X["Year_Built"]
+        X["Age"].fillna(X["Age"].median())        
+
+        # Add age feature for garage.
+        X["Garage_Age"] = X["Year_Sold"] - X["Garage_Yr_Blt"]
+        X["Garage_Age"].fillna(value=0,inplace=True)        
+
+        notify.leaving(__class__.__name__, "run")
+        return X, y
+
+# =========================================================================== #
+#                          4. TARGET TRANSFORMER                              #
+# =========================================================================== #
+class TargetTransformer(BaseEstimator, TransformerMixin):
+    
+    def __init__(self):
+        pass
+
+    def fit(self,y, **fit_params):
+        return self
+    
+    def transform(self, y, **transform_params):
+        return np.log(y)
+
+    def inverse_transform(self, y, **transform_params):
+        return np.exp(y)
+
+# =========================================================================== #
+#                      5. CONTINUOUS  PREPROCESSING                           #
+# =========================================================================== #
+class ContinuousPreprocessor(BaseEstimator, TransformerMixin):
+    def __init__(self, continuous=continuous):
+        self._continuous = continuous
+
+    def fit(self, X, y=None, **fit_params):
+        return self
+    
+    def transform(self, X,  **transform_params):       
+        notify.entering(__class__.__name__, "transform")
+        # Impute missing values as linear function of other features
+        imputer = IterativeImputer()
+        X[self._continuous] = imputer.fit_transform(X[self._continuous])
+
+        # Power transformation to make feature distributions closer to Guassian
+        power = PowerTransformer(method="yeo-johnson", standardize=False)
+        X[self._continuous] = power.fit_transform(X[self._continuous])
+
+        notify.leaving(__class__.__name__, "transform")
+        
+        return X
+
+# =========================================================================== #
+#                        6. DISCRETE PREPROCESSING                            #
+# =========================================================================== #
+class DiscretePreprocessor(BaseEstimator, TransformerMixin):
+    def __init__(self, strategy="most_frequent", discrete=discrete):
+        self._strategy = strategy
+        self._discrete = discrete
+
+    def fit(self, X, y=None, **fit_params):
+        return self
+    
+    def transform(self, X,  **transform_params):       
+        notify.entering(__class__.__name__, "transform")
+        # Missing discrete variables will be imputed according to the strategy provided
+        # Default strategy is the mean.
+        imputer = SimpleImputer(strategy=self._strategy)
+        X[self._discrete] = imputer.fit_transform(X[self._discrete])
+        
+        notify.leaving(__class__.__name__, "transform")
+
+        return X        
+
+# =========================================================================== #
+#                        7. ORDINAL PREPROCESSING                             #
+# =========================================================================== #
+class OrdinalPreprocessor(BaseEstimator, TransformerMixin):
+    def __init__(self, strategy="most_frequent", ordinal=ordinal, 
+        ordinal_map=ordinal_map):
+        self._strategy = strategy
+        self._ordinal = ordinal
+        self._ordinal_map = ordinal_map
+
+    def fit(self, X, y=None, **fit_params):
+        return self
+    
+    def transform(self, X, y=None,  **transform_params):       
+        notify.entering(__class__.__name__, "transform")
+        categorical = list(X.select_dtypes(include=["object"]).columns)
+        # Create imputer object
+        imputer = SimpleImputer(strategy=self._strategy)
+        
+        # Perform imputation of categorical variables to most frequent
+        X[self._ordinal] = imputer.fit_transform(X[self._ordinal])        
+
+        # Map levels to ordinal mappings
+        for variable, mappings in self._ordinal_map.items():
+            for k,v in mappings.items():
+                X[variable].replace({k:v}, inplace=True)        
+
+        notify.leaving(__class__.__name__, "transform")
+        
+        return X       
+# =========================================================================== #
+#                      8. TARGET LEAVE-ONE-OUT ENCODER                        #
+# =========================================================================== #        
+class TargetEncoderLOO(TargetEncoder):
+    """Leave-one-out target encoder.
+    Source: https://brendanhasz.github.io/2019/03/04/target-encoding
+    """
+    
+    def __init__(self, cols=nominal):
+        """Leave-one-out target encoding for categorical features.
+        
+        Parameters
+        ----------
+        cols : list of str
+            Columns to target encode.
+        """
+        self.cols = cols
+        
+
+    def fit(self, X, y):
+        """Fit leave-one-out target encoder to X and y
+        
+        Parameters
+        ----------
+        X : pandas DataFrame, shape [n_samples, n_columns]
+            DataFrame containing columns to target encode
+        y : pandas Series, shape = [n_samples]
+            Target values.
+            
+        Returns
+        -------
+        self : encoder
+            Returns self.
+        """
+        
+        # Encode all categorical cols by default
+        if self.cols is None:
+            self.cols = [col for col in X
+                         if str(X[col].dtype)=='object']
+
+        # Check columns are in X
+        for col in self.cols:
+            if col not in X:
+                raise ValueError('Column \''+col+'\' not in X')
+
+        # Encode each element of each column
+        self.sum_count = dict()
+        for col in self.cols:
+            self.sum_count[col] = dict()
+            uniques = X[col].unique()
+            for unique in uniques:
+                ix = X[col]==unique
+                count = X[X[col] == unique].shape[0]
+                singleton = "N" if (count > 1) else "Y" 
+                self.sum_count[col][unique] = \
+                    (y[ix].sum(),ix.sum(), singleton)
+            
+        # Return the fit object
+        return self
+
+    
+    def transform(self, X, y=None):
+        """Perform the target encoding transformation.
+
+        Uses leave-one-out target encoding for the training fold,
+        and uses normal target encoding for the test fold.
+
+        Parameters
+        ----------
+        X : pandas DataFrame, shape [n_samples, n_columns]
+            DataFrame containing columns to encode
+
+        Returns
+        -------
+        pandas DataFrame
+            Input DataFrame with transformed columns
+        """
+        
+        # Create output dataframe
+        Xo = X.copy()
+
+        # Use normal target encoding if this is test data
+        if y is None:
+            for col in self.sum_count.keys():
+                vals = np.full(X.shape[0], np.nan)
+                for cat, sum_count in self.sum_count[col].items():
+                    vals[X[col]==cat] = sum_count[0]/sum_count[1]
+                Xo[col] = vals
+
+        # LOO target encode each column
+        else:
+            for col in self.sum_count.keys():
+                vals = np.full(X.shape[0], np.nan)
+                for cat, sum_count in self.sum_count[col].items():
+                    ix = X[col]==cat     
+                    if sum_count[2] == "Y":
+                        vals[ix] = sum_count[0]/sum_count[1]
+                    else:               
+                        vals[ix] = (sum_count[0]-y[ix])/(sum_count[1]-1)
+                Xo[col] = vals
+            
+        # Return encoded DataFrame
+        return Xo
+      
+            
+    def fit_transform(self, X, y=None):
+        """Fit and transform the data via target encoding.
+        
+        Parameters
+        ----------
+        X : pandas DataFrame, shape [n_samples, n_columns]
+            DataFrame containing columns to encode
+        y : pandas Series, shape = [n_samples]
+            Target values (required!).
+
+        Returns
+        -------
+        pandas DataFrame
+            Input DataFrame with transformed columns
+        """
+        return self.fit(X, y).transform(X, y)
+# =========================================================================== #
+#                        8. NOMINAL PREPROCESSING                             #
+# =========================================================================== #
+class NominalPreprocessor(BaseEstimator, TransformerMixin):
+    def __init__(self, encoder=TargetEncoderLOO(nominal)):                
+        self._encoder = encoder
+
+    def fit(self, X, y=None, **fit_params):
+        notify.entering(__class__.__name__, "fit")
+        self._encoder.fit(X, y)
+        notify.leaving(__class__.__name__, "fit")
+        return self
+    
+    def transform(self, X, y=None,  **transform_params):            
+        notify.entering(__class__.__name__, "transform")        
+        notify.leaving(__class__.__name__, "transform")
+        return self._encoder.transform(X, y)
+    
+    def fit_transform(self, X,y=None):
+        return self._encoder.fit_transform(X, y)
+
+# =========================================================================== #
+#                            9. BASE FILTER                                   #
+# =========================================================================== #  
+class BaseFilter(BaseEstimator, TransformerMixin, ABC):
+    def __init__(self):
+        pass    
+    
+    def report(self, X):
+        classname = self.__class__.__name__
+        print("\nSuspects")
+        print(self.suspects_)
+        message = f"The following {len(self.features_removed_)} were removed from the data.\n{self.features_removed_}."
+        comment.regarding(classname, message)
+
+
+# =========================================================================== #
+#                         10. COLLINEARITY FILTER                             #
+# =========================================================================== #  
+class CollinearityFilter(BaseFilter):
+    def __init__(self, features, threshold=0.80, alpha=0.05, numeric=numeric):
+        self._threshold = threshold
+        self._alpha = alpha
+        self._features = features        
+        self._numeric = numeric
+        
+    def _fit(self, X, y=None):
+        notify.entering(__class__.__name__, "_fit") 
+        correlations = pd.DataFrame()
+        columns = X[self._numeric].columns.tolist()
+        
+        # Perform pairwise correlation coefficient calculations
+        for col_a, col_b in itertools.combinations(columns,2):            
+            r, p = pearsonr(X[col_a], X[col_b])
+            cols =  col_a + "__" + col_b
+            d = {"Columns": cols, "A": col_a, "B": col_b,
+                 "Correlation": r, "p-value": p}
+            df = pd.DataFrame(data=d, index=[0])
+            correlations = pd.concat((correlations, df), axis=0)
+
+        # Now compute correlation between features and target.
+        relevance = pd.DataFrame()
+        for column in columns:
+            r, p = pearsonr(X.loc[:,column], y)
+            d = {"Feature": column, "Correlation": r, "p-value": p}
+            df = pd.DataFrame(data=d, index=[0])            
+
+        # Obtain observations above correlation threshold and below alpha
+        self.suspects_ = correlations[(correlations["Correlation"] >= self._threshold) & (correlations["p-value"] <= self._alpha)]
+        if self.suspects_.shape[0] == 0:
+            self.X_ = X
+            return 
+
+        # Iterate over suspects and determine column to remove based upon
+        # correlation with target
+        to_remove = []
+        for index, row in self.suspects_.iterrows():
+            if np.abs(relevance[relevance[index] == row["A"]]) > \
+                np.abs(relevance[relevance[index] == row["B"]]):
+                to_remove.append(row["B"])
+            else:
+                to_remove.append(row["A"])
+        
+        self.X_ = X.drop(columns=to_remove)
+        self.features_removed_ += to_remove
+        self._fit(self.X_)
+        notify.leaving(__class__.__name__, "fit_") 
+
+    def fit(self, X, y=None):
+        notify.entering(__class__.__name__, "fit") 
+        self.features_removed_ = []
+        self._fit(X, y)        
+        notify.leaving(__class__.__name__, "fit") 
+        return self
+
+    def transform(self, X, y=None):
+        notify.entering(__class__.__name__, "transform") 
+        self._report(X, y)
+        notify.leaving(__class__.__name__, "transform") 
+        return self.X_
+
+    def fit_transform(self, X, y=None):
+        self.fit(X,y)
+        return self.transform(X,y)
+
+# =========================================================================== #
+#                         9. DATA PROCESSING PIPELINE                         #
+# =========================================================================== #
+def preprocess_train(X_train, y_train):
+    # Clean data
+    X_train, y_train = DataCleaner().run(X_train, y_train)
+
+    # Screen Data
+    X_train, y_train = DataScreener().run(X_train, y_train)    
+    
+    # Create new features
+    X_train, y_train = FeatureEngineer().run(X_train, y_train)
+    assert(X_train.isnull().sum().sum() == 0), f"{X_train.isnull().sum().sum()} null values after New Features"
+
+    # Transform Target
+    y_train = TargetTransformer().fit_transform(y_train)
+
+    # Continuous     
+    X_train = ContinuousPreprocessor(continuous=continuous).fit(X_train).transform(X_train)    
+    assert(X_train.isnull().sum().sum() == 0), f"{X_train.isnull().sum().sum()} null values after Continuous"
+
+    # Discrete     
+    X_train = DiscretePreprocessor().fit(X_train).transform(X_train)
+    assert(X_train.isnull().sum().sum() == 0), f"{X_train.isnull().sum().sum()} null values after Discrete"
+
+    # Ordinal    
+    X_train = OrdinalPreprocessor().fit(X_train).transform(X_train)
+    assert(X_train.isnull().sum().sum() == 0), f"{X_train.isnull().sum().sum()} null values after Ordinal"
+
+    # Nominal    
+    X_train_n = NominalPreprocessor().fit(X_train, y_train).transform(X_train, y_train)        
+    assert(X_train.isnull().sum().sum() == 0), f"{X_train.isnull().sum().sum()} null values after Nominal"
+    
+
+    # Collinearity Filter
+    filter_ = CollinearityFilter(X_train.columns)
+    X_train = filter_.fit(X_train, y_train).transform(X_train, y_train)
+    print(filter_.report())
+
+
+    return X_train, y_train
+        
+
+def main():
+
+    data = AmesData()
+    X_train, y_train, X_test = data.get(1)    
+
+    # Preprocess
+    preprocess_train(X_train, y_train)
 
 
 if __name__ == "__main__":
-    notify = Notify(verbose=True)    
     main()
 #%%

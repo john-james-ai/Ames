@@ -26,3 +26,25 @@ Things to consider:
 2.  Transformed all ordinal variables to integers.
 3.  Transformed all nominal variables using feature hashing.
 4.  Continuous (Floating Point) variables were power transformed according to... [see Scikit Learn documentation]
+
+### Pipeline
+1. Preprocessing
+   1. Data Cleaning
+      1. Corrections
+      2. Target Transformation
+   2. Data Screening
+   3. Feature Engineering
+   4. Preprocessing
+      1. Continuous Preprocessing
+         1. Iterative Imputer
+         2. Power Transformer (No Standard)
+      2. Discrete Preprocessing
+         1. SimpleImputer         
+      3. Ordinal Preprocessing
+         1. Simple Imputer (most-frequent)
+         2. Ordinal Map Encoding
+      4. Nominal Preprocessing
+         1. Mean Encoding
+      5. Standardize
+   5. 
+   

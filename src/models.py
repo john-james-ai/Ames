@@ -68,7 +68,7 @@ from globals import regressors, regressor_parameters, ensembles, ensemble_parame
 
 # Local modules
 from data import AmesData
-from data_processor import NominalEncoder, OrdinalEncoder
+from data_processor import HotOneEncoder, OrdinalEncoder
 from data_processor import ContinuousPreprocessor, DiscretePreprocessor, CategoricalPreprocessor
 from data_processor import DataScreener, TargetTransformer
 from feature_selection import FeatureSelector
@@ -109,7 +109,7 @@ class ModelEvaluator:
                                       scoring=self._scoring,
                                       nominal=self._nominal,
                                       numeric=self._numeric)),
-                    ("nominal_encoder", NominalEncoder(nominal=self._nominal)),                    
+                    ("nominal_encoder", HotOneEncoder(nominal=self._nominal)),                    
                     ("estimator", estimator)]
 
             # Update parameters to include feature selection parameters
