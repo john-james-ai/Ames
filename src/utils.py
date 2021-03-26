@@ -129,15 +129,15 @@ class Persist(ABC):
             return filenames
         
 
-    def _create_filepath(self, item, descriptor=None):
+    def _create_filepath(self, item, cv, eid):
         """Creates a filename for an item."""
         cdate = datetime.datetime.now()
-        name = (self._get_item_name(item) + "_") if self._get_item_name(item) else ""
-        descriptor = (descriptor + "_") if descriptor else ""
+        name = (self._get_item_name(item) + "_") if self._get_item_name(item) else ""        
+        cv = "cv" + str(cv) + "_"
         date = cdate.strftime("%B") + "-" + str(cdate.strftime("%d")) + "-" + str(cdate.strftime("%Y")) + "_"
         index = str(self._gen_id()) 
         ext = self._get_file_ext(item)        
-        filename = self._directory + name + descriptor + date + index + ext
+        filename = self._directory + name + cv + date + index + str(eid) + ext
         return filename
 
     @abstractmethod
@@ -145,7 +145,7 @@ class Persist(ABC):
         pass
 
     @abstractmethod
-    def dump(self, item, descriptor=None):
+    def dump(self, item, descriptor=None, cv=None, eid=None):
         pass
 
 # =========================================================================== #
@@ -153,7 +153,7 @@ class Persist(ABC):
 # =========================================================================== #
 class PersistEstimator(Persist):
     """ Responsible for serializing and deserializing estimators."""
-    def __init__(self, directory="../tests/"):
+    def __init__(self, directory="../models/"):
         super().__init__(directory)
 
     def _get_item_name(self, item):
@@ -165,8 +165,8 @@ class PersistEstimator(Persist):
     def load(self, filename):
         return load(filename)
 
-    def dump(self, item, descriptor=None):
-        filename = self._create_filepath(item, descriptor)
+    def dump(self, item, cv, eid):
+        filename = self._create_filepath(item, cv, eid)
         dump(item, filename)
 
 # =========================================================================== #
@@ -187,7 +187,7 @@ class PersistNumpy(Persist):
         return np.load(filename)
 
     def dump(self, item, descriptor=None):
-        filename = self._create_filepath(item, descriptor)
+        filename = self._create_filepath(item, descriptor=descriptor)
         np.save(filename, item)        
 
 # =========================================================================== #
@@ -219,10 +219,14 @@ class PersistDictionary(Persist):
     def __init__(self, directory="../tests/"):
         super().__init__(directory)
 
+    def _create_filepath(self, item, descriptor):
+        return self._directory + descriptor + self._get_file_ext()
+
+
     def _get_item_name(self, item):
         return ""  
 
-    def _get_file_ext(self, item):
+    def _get_file_ext(self, item=None):
         return ".joblib"
 
     def load(self, filename):
@@ -242,7 +246,30 @@ def onehotmap(features, nominal):
                 np.append(groups,col)
                 break
     return groups            
+# --------------------------------------------------------------------------- #
+def print_list(items, width=5):
+    for i, elem in enumerate(items):
+        if i % width == 0:
+            print("\n")
+        print(str(elem).ljust(3), end=' ')
+    print("\n")    
 
+# --------------------------------------------------------------------------- #
+def print_dict(d):
+    for k, v in d.items():
+        print(f"         {k}: {v}")
+# --------------------------------------------------------------------------- #
+def print_dict_keys(d):
+    for k, v in d.items():
+        print(f"         {k}")
+# --------------------------------------------------------------------------- #
+# Creates formulas to be used with statsmodels ols function.        
+def get_formulas(features):
+    formulas = []
+    for feature in features:
+        formula = "Sale_Price ~ C(" + feature + ")"
+        formulas.append(formula)
+    return formulas        
 # --------------------------------------------------------------------------- #
 class Notify:
     def __init__(self, verbose=True):

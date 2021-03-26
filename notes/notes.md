@@ -20,6 +20,14 @@ Things to consider:
 
 ### Feature Engineering
 1. Added Age of home at time of sale by subtracting Year_Built from Year_Sold.
+2. Create District variable which target encoding four quantiles based upon rank of sale price.
+3. Crisis year if the property sold during 2008 crisis
+4. Nominal variables:
+   1. Has_Garage
+   2. Has_Deck
+   3. Has_Pool
+   4. Has_Bsmt
+5. Another nominal variable Two_Level
 
 ### Data Transformation
 1.  Transformed target to Log Sales Priced.
@@ -52,4 +60,9 @@ Things to consider:
    8. Rinse Repeat
 
 Note: No need to keep track of PID. It will be in the test set.
+
+# Todos
+1. Make feature metadata resident in memory at beginning of script, 
+2. Error when feature name is not found. this happens when deleting features.  Use compress whenever selecting features of a certain type to get the features of that type that are extant in the dataset.
+
    

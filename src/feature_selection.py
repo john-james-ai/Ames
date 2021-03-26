@@ -72,6 +72,102 @@ from metrics import rmse
 from data import AmesData
 from data_processor import HotOneEncoder
 from utils import onehotmap, notify, validate, convert, comment
+
+# =========================================================================== #
+#                               IMPORTANCE                                    #
+# =========================================================================== #    
+class Importance:
+    """Facility for removing redundant or unimportant features."""
+    def __init__(self, X, y, max_collinearity=0.7, alpha=0.05,
+    min_target_correlation=0.65, feature_metadata=FeatureMetadata(),
+    n_jobs=2):
+        self.X_ = X
+        self.y_ = y
+        self.X = X.drop(columns=["PID"])
+        self.y = y.drop(columns=["PID"])        
+        self._max_collinearity = max_collinearity
+        self._alpha = alpha
+        self._min_target_correlation = min_target_correlation
+        self._feature_metadata = feature_metadata   
+        self._feature_metadata.exclude_feature("PID")    
+        self._n_jobs = n_jobs
+
+        self.anova()
+        self.target_correlation()     
+        self.regression_feature_importance(estimator=LinearRegression())
+        self.tree_based_feature_importance(estimator=RandomForestRegressor())
+        self.permutation_feature_importance(estimator=RandomForestRegressor())
+        
+    def anova(self):
+        self.variance_ = pd.DataFrame()
+        features = self._feature_metadata.get_categorical_features()
+        for feature in features:
+            f, p = f_oneway(self.X[feature], self.y)
+            d = {"Feature": feature,"F": f, "p-value": p}
+            df = pd.DataFrame(data=d, index=[0])
+            if p > self._alpha:
+                df["Active"] = False
+            else:
+                df["Active"] = True
+            self.variance_ = pd.concat((self.variance_,df),axis=0)
+
+    def target_correlation(self):
+        self.target_correlations_ = pd.DataFrame()
+        features = self._feature_metadata.get_active_features()
+        for feature in features:
+            r, p = pearsonr(self.X.loc[:,feature], self.y)
+            d = {"Feature": feature, "Correlation": abs(r), "p-value": p}
+            df = pd.DataFrame(data=d, index=[0])
+            self.target_correlations_ = pd.concat((self.target_correlations_,df), axis=0)  
+
+
+    def regression_feature_importance(self, estimator):
+        """Computes feature importance using linear regression coefficients."""
+        model = estimator
+        model.fit(self.X, self.y)
+        importances = {"Feature": self.X.columns.tolist(), "Importance": abs(model.coef_)}                        
+        self.regression_feature_importance_ = pd.DataFrame(data=importances)
+
+    def tree_based_feature_importance(self, estimator):
+        model = estimator
+        model.fit(self.X, self.y)
+        importances = {"Feature": self.X.columns.tolist(), "Importance": model.feature_importances_}
+        self.tree_based_feature_importance_ = pd.DataFrame(data=importances)
+
+    def permutation_feature_importance(self, estimator):
+        model = estimator
+        model.fit(self.X, self.y)
+        results = permutation_importance(model, self.X, self.y, scoring=rmse, n_jobs=self._n_jobs)
+        importances = {"Feature": self.X.columns.tolist(), "Importance": results.importances_mean}
+        self.permutation_feature_importance_ = pd.DataFrame(data=importances)
+        print(f"Permutation importance \n{self.permutation_feature_importance_}")
+
+    def plot(self, top=10):
+        fig, axes = plt.subplots(2,2, figsize=(18,10))
+        fig.suptitle("Feature Selection\nTarget Correlation and Importance\nTop 10 Features")
+        # Target correlations plot
+        df = self.target_correlations_.head(top).sort_values(by="Correlation", ascending=False)
+        sns.barplot(x="Correlation",y="Feature", data=df, palette=palette, ax=axes[0,0])
+        axes[0,0].set_title("Target Correlation")
+
+        # Regression Feature Importance
+        df = self.regression_feature_importance_.head(top).sort_values(by="Importance", ascending=False)
+        sns.barplot(x="Importance",y="Feature", data=df, palette=palette, ax=axes[0,1])
+        axes[0,1].set_title("Feature Importance")
+        
+        # Random Forest Feature Importance
+        df = self.tree_based_feature_importance_.head(top).sort_values(by="Importance", ascending=False)
+        sns.barplot(x="Importance",y="Feature", data=df, palette=palette,ax=axes[1,0])
+        axes[1,0].set_title("Random Forests Feature Importance")
+
+        # Permutation Feature Importance
+        df = self.permutation_feature_importance_.head(top).sort_values(by="Importance", ascending=False)
+        sns.barplot(x="Importance",y="Feature", data=df, palette=palette, ax=axes[1,1])
+        axes[1,1].set_title("Permutation Feature Importance")
+
+        plt.tight_layout()
+        plt.show()
+
 # =========================================================================== #
 #                            COLUMN SELECTOR                                  #
 # =========================================================================== #  

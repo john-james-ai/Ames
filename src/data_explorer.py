@@ -33,7 +33,22 @@ from globals import nominal, ordinal_map
 from data import AmesData
 from tabulate import tabulate
 import pprint
-
+from pipeline_v1 import ordinal, continuous, discrete, nominal
+# =========================================================================== #
+#                             FEATURE METADATA                                #
+# =========================================================================== #
+def feature_metadata(X):
+    features = pd.DataFrame()
+    for feature in X.columns:
+        ftype = "Ordinal" if feature in ordinal else \
+            "Nominal" if feature in nominal else \
+                "Continuous" if feature in continuous else \
+                    "Discrete"
+        d = {"Feature": feature, "Type": ftype, "Source": "Original", 
+             "Active": True, "Signature":""}
+        df = pd.DataFrame(data=d, index=[0])
+        features = pd.concat((features,df), axis=0)    
+    return features
 # =========================================================================== #
 #                        CATEGORICAL FEATURE METADATA                         #
 # =========================================================================== #
@@ -228,7 +243,13 @@ def check_unique():
                 print(f"   {value} Count: {count}")
         print("\n\n")
 def main():
-    check_unique()
+    filename = "../data/external/Ames_data.csv"
+    X = pd.read_csv(filename)
+    X.drop(columns="Sale_Price", inplace=True)
+    metadata = feature_metadata(X)
+    print(metadata)
+    filename = "../data/metadata/feature_metadata.csv"
+    metadata.to_csv(filename, index=False)
     
 
 if __name__ == "__main__":
