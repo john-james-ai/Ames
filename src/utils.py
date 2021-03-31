@@ -249,15 +249,18 @@ def onehotmap(features, nominal):
 # --------------------------------------------------------------------------- #
 def print_list(items, width=5):
     for i, elem in enumerate(items):
-        if i % width == 0:
-            print("\n")
-        print(str(elem).ljust(3), end=' ')
+        print(f"            {str(elem)}")        
     print("\n")    
 
 # --------------------------------------------------------------------------- #
 def print_dict(d):
     for k, v in d.items():
-        print(f"         {k}: {v}")
+        if isinstance(v,(list,np.ndarray)):
+            print(f"         {k}:")
+            for i in v:
+                print(f"          {i}")
+        else:
+            print(f"         {k}: {v}")
 # --------------------------------------------------------------------------- #
 def print_dict_keys(d):
     for k, v in d.items():
@@ -326,7 +329,27 @@ def test():
     filename = persist.search("9634")
     assert(persist.load(filename).shape == X.shape), "Persist DataFrame ain't workin'"
     
+def diagnose(X):
+    print("\n\n")
+    print("="*40)
+    print("            Starting Diagnosis")
+    print("-"*40)
+    print(f"Garage_Finish:{{{X['Garage_Finish'].value_counts()}}}")
+    print(f"Garage_Type:{X['Garage_Type'].unique()}")
+    print(f"Garage_Cars:{X['Garage_Cars'].unique()}")
+    print(f"Garage_Qual:{X['Garage_Qual'].unique()}")
+    print(f"Garage_Cond:{X['Garage_Cond'].unique()}")
+    print("\n")
+    print(f"Has_Garage:{X['Has_Garage'].unique()}")
+    print(f"Has_Pool:{X['Has_Pool'].unique()}")
+    print(f"Has_Basement:{X['Has_Basement'].unique()}")
+    print(f"Has_Fireplace:{X['Has_Fireplace'].unique()}")
+    print(f"Has_Porch:{X['Has_Porch'].unique()}")
 
+
+    
+    print("            Diagnosis Complete")
+    print("="*40)
 
 if __name__ == "__main__":        
     test()

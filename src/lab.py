@@ -21,7 +21,14 @@ import pandas as pd
 import numpy as np
 from sklearn.datasets import make_regression
 import seaborn as sns
-cmap = sns.dark_palette("#69d", reverse=True, as_cmap=True)
-X, y = make_regression(n_samples=1000, n_features=1, noise=100, random_state=0)
-sns.barplot(x=X, y=y, palette=cmap)
-plt.show()
+from utils import print_dict
+filename = "../data/external/schools.csv"              
+schools = pd.read_csv(filename)     
+d = {"Neighborhood": schools["Neighborhood"].values,
+     "Zip": schools["Zip"].values,
+     "School_Title_1": schools["School_Title_1"].values,
+     "School_Students": schools["School_Students"].values,
+     "School_Teachers": schools["School_Teachers"].values,
+     "School_Student_Teacher_Ratio": schools["School_Student_Teacher_Ratio"].values,
+     "Free_or_Reduced_Lunch": schools["Free_or_Reduced_Lunch"].values}
+print_dict(d)     

@@ -59,95 +59,14 @@ class AmesData:
         X_train = raw_train.drop(columns=["Sale_Price"])
         y_train = raw_train["Sale_Price"]
         train = {"X": X_train, "y": y_train}
-        # Format test
-        X_test = raw_test
-        y_test = raw_test_y
-        test = {"X": X_test, "y": y_test}
+        # Format test                
+        test = {"X": raw_test, "y": raw_test_y}
 
         return train, test
 
 
 
-# =========================================================================== #
-#                              METADATA                                       #
-# =========================================================================== # 
-class FeatureMetadata:
-    def __init__(self, filename="../data/metadata/feature_metadata.csv"):
-        self._filename = filename
-        self.fm_ = pd.read_csv(self._filename) # Feature Metadata
 
-    def get_feature(self, feature):
-        return self.fm_[self.fm_["Type"] == coltype]
-
-    def get_features(self, feature_type=None):
-        """Returns all features or all features of the requested feature type."""
-        if feature_type:
-            return list(self.fm_[(self.fm_["Type"] == feature_type)]["Feature"].values)
-        else:
-            return list(self.fm_["Feature"].values)
-
-    def get_categorical_features(self):
-        """Returns a list of nominal and ordinal features."""
-        nominal = list(self.fm_[(self.fm_["Type"] == "Nominal") & (self.fm_["Active"] == True)]["Feature"].values)
-        ordinal = list(self.fm_[(self.fm_["Type"] == "Ordinal") & (self.fm_["Active"] == True)]["Feature"].values)
-        return nominal + ordinal
-
-    def get_numeric_features(self):
-        """Returns a list of continuous and discrete features."""
-        discrete = list(self.fm_[(self.fm_["Type"] == "Discrete") & (self.fm_["Active"] == True)]["Feature"].values)
-        continuous = list(self.fm_[(self.fm_["Type"] == "Continuous") & (self.fm_["Active"] == True)]["Feature"].values)
-        return discrete + continuous        
-
-
-    def get_original_features(self, feature_type=None):
-        """Returns original features or original features of the requested feature type."""
-        if feature_type:
-            return list(self.fm_[(self.fm_["Type"] == feature_type)& (self.fm_["Source"] == "Original")]["Feature"].values)
-        else:
-            return list(self.fm_[(self.fm_["Source"] == "Original")]["Feature"].values)
-
-    def get_active_features(self, feature_type=None):
-        """Returns original features or original features of the requested feature type."""
-        if feature_type:
-            return list(self.fm_[(self.fm_["Active"] == True) & (self.fm_["Type"] == feature_type)]["Feature"].values)
-        else:
-            return list(self.fm_[(self.fm_["Active"] == True)]["Feature"].values)
-
-    def exclude_feature(self, feature):
-        self.fm_.loc[self.fm_["Feature"]==feature, "Active"] = False
-        self.fm_.loc[self.fm_["Feature"]==feature, "Signature"] = sys._getframe(1).f_code.co_name
-        self.save()
-
-    def include_feature(self, feature):
-        self.fm_.loc[self.fm_["Feature"]==feature, "Active"] = True
-        self.fm_.loc[self.fm_["Feature"]==feature, "Signature"] = sys._getframe(1).f_code.co_name
-        self.save()
-
-    def exclude_features(self,features):
-        for feature in features:
-            self.exclude_feature(feature)
-
-    def include_features(self,features):
-        for feature in features:
-            self.include_feature(feature)                    
-
-    def add_feature(self, feature, feature_type, active=True):
-        d = {"Feature": feature, "Type": feature_type, "Source": "Derived",
-            "Active": active, "Signature": sys._getframe(1).f_code.co_name }
-        df = pd.DataFrame(data=d, index=[0])
-        self.fm_ = pd.concat((self.fm_,df),axis=0)
-        self.save()
-
-    def save(self):
-        self.fm_.to_csv(self._filename, index=False)    
-    
-    def print(self, feature=None, feature_type=None):
-        if feature_type:
-            print(self.fm_[self.fm_["Type"]==feature_type])
-        elif feature:
-            print(self.fm_[self.fm_["Feature"]==feature])
-        else:
-            print(self.fm_)
 
 
 def main():

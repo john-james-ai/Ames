@@ -59,7 +59,7 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.inspection import permutation_importance
 
 # Regression based estimators
-from sklearn.linear_model import LinearRegression, Lasso, Ridge, ElasticNet
+from sklearn.linear_model import LinearRegression, LassoCV, RidgeCV, ElasticNetCV
 
 # Tree-based estimators
 from sklearn.experimental import enable_hist_gradient_boosting
@@ -91,8 +91,9 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
 pd.set_option('display.max_colwidth', None)
 pd.set_option('mode.chained_assignment', None)
+random_state = 6589
 # =========================================================================== #
-#                                ESTIMATORS                                   #
+#                                  MODELS                                     #
 # =========================================================================== #
 model_groups = {
     "Regressors": {
@@ -162,6 +163,64 @@ model_groups = {
 }
 regressors = model_groups["Regressors"]
 ensembles = model_groups["Ensembles"]
+
+# =========================================================================== #
+#                                ESTIMATORS                                   #
+# =========================================================================== #
+baseline_estimator_groups = {
+    "Regressors": {
+        "Linear Regression": LinearRegression(fit_intercept=True, normalize=False,
+                            copy_X=True, n_jobs=4),
+        "LassoCV": LassoCV(n_alphas=10, fit_intercept=True, normalize=False,
+                    cv=5, n_jobs=4),
+        "RidgeCV": RidgeCV(fit_intercept=True, normalize=False, scoring=rmse,
+                    cv=5),
+        "ElasticNetCV": ElasticNetCV(l1_ratio=[.5,.9], n_alphas=10,
+                    fit_intercept=True, normalize=False, cv=5, copy_X=True,
+                    n_jobs=4, random_state=random_state)
+    },
+    "Ensembles": {
+        "Random Forest": RandomForestRegressor(n_estimators=100, criterion="mse",
+                    n_jobs=4, random_state=random_state),
+        "AdaBoost": AdaBoostRegressor(random_state=random_state),
+        "Extra Trees": ExtraTreesRegressor(n_estimators=100, criterion="mse",
+                    n_jobs=4),
+        "Gradient Boosting": GradientBoostingRegressor(loss="ls", 
+                    learning_rate=0.1)
+
+    }
+}
+optimized_estimator_groups = {
+    "Regressors": {
+        "Linear Regression": LinearRegression(fit_intercept=True, normalize=False,
+                            copy_X=True, n_jobs=4),
+        "LassoCV": LassoCV(n_alphas=100, fit_intercept=True, normalize=False,
+                    cv=5, n_jobs=4),
+        "RidgeCV": RidgeCV(alphas=np.arange(0.5,10.5,0.5),fit_intercept=True, normalize=False, scoring=rmse,
+                    cv=5),
+        "ElasticNetCV": ElasticNetCV(l1_ratio=[.1, .5, .7, .9, .95, .99, 1], n_alphas=10,
+                    fit_intercept=True, normalize=False, cv=5, copy_X=True,
+                    n_jobs=4, random_state=random_state)
+    },
+    "Ensembles": {
+        "Random Forest":
+            GridSearchCV(estimator=RandomForestRegressor(),
+                param_grid=model_groups["Ensembles"]["Random Forest"]["Parameters"],
+                scoring=rmse, n_jobs=4,cv=5,refit=True),
+        "AdaBoost":
+            GridSearchCV(estimator=AdaBoostRegressor(),
+                param_grid=model_groups["Ensembles"]["AdaBoost"]["Parameters"],
+                scoring=rmse, n_jobs=4,cv=5,refit=True),
+        "Extra Trees":
+            GridSearchCV(estimator=ExtraTreesRegressor(),
+                param_grid=model_groups["Ensembles"]["Extra Trees"]["Parameters"],
+                scoring=rmse, n_jobs=4,cv=5,refit=True),         
+        "Gradient Boosting":
+            GridSearchCV(estimator=GradientBoostingRegressor(),
+                param_grid=model_groups["Ensembles"]["Gradient Boosting"]["Parameters"],
+                scoring=rmse, n_jobs=4,cv=5,refit=True)
+    }    
+}
 # =========================================================================== #
 #                            0. SCORING                                       #
 # =========================================================================== #
@@ -478,7 +537,7 @@ class ImportanceSelector(BaseEstimator, TransformerMixin):
 class RFECVSelector(BaseEstimator, TransformerMixin):
     """Returns a dataset with top N important features."""
     def __init__(self, estimator, step=1, min_features_to_select=5,cv=5,
-                    scoring=rmse, n_jobs=2):
+                    scoring=rmse, n_jobs=4):
         self._estimator = estimator
         self._step = step
         self._min_features_to_select = min_features_to_select
@@ -500,7 +559,101 @@ class RFECVSelector(BaseEstimator, TransformerMixin):
     def fit_transform(X, y=None):
         return self.fit(X,y).transform(X)
 
+# =========================================================================== #
+#                              3. MODEL                                       #
+# =========================================================================== #
+class Model:
+    def __init__(self, estimator, selector, **kwargs):
+        self._estimator = estimator
+        self._selector = selector   
+        self.model_id_ = uuid.uuid4().time_low                 
 
+    def select_features(self, X, y):
+        X = self._selector.fit(X, y).transform(X)
+        self.select_features_ = X.columns.tolist()
+
+    def _extract_fit_data(self, X, y):
+        if self._estimator.__class__.__name__ ==  "GridSearchCV":
+            self.name_ = self._estimator.best_estimator_.__class__.__name__
+            self.best_estimator_ = self._estimator.best_estimator_                         
+            self.best_params_ = self._estimator.best_params_
+            self.train_score_ = self._estimator.best_score_
+        else:            
+            self.name_ = self._estimator.__class__.__name__
+            self.best_estimator_ = self._estimator
+            self.best_params_ = self._estimator.get_params()
+            self.train_score_ = self._score(X, y)
+        self.n_features_ = X.shape[1]
+
+
+    def fit(self, X, y):
+        start = time.time()
+        X = self.select_features(X, y)
+        self._estimator.fit(X,y)
+        end = time.time()
+        self.training_time_ = round(end - start,3)
+        self._extract_fit_data(X, y)
+        return self
+
+    def predict(self, X):
+        start = time.time()
+        y_pred = self._estimator.predict(X)
+        end = time.time()
+        self.prediction_time_ = round(end - start,3)
+        return y_pred
+
+    def _score(self, X, y):        
+        y_pred = self.predict(X)
+        self.train_score_ = RMSE(y, y_pred)
+        return self.train_score_
+        
+    def score(self, X, y):        
+        y_pred = self.predict(X)
+        self.test_score_ = RMSE(y, y_pred)
+        return self.test_score_
+
+        
+
+# =========================================================================== #
+#                           4. EVALUATOR                                      #
+# =========================================================================== #
+class Evaluator:
+    """Captures performance results, reports, and returns best estimator."""
+    def __init__(self, persist=True):
+        self.models_ = {}
+        self.results_ = pd.DataFrame()
+
+
+    def add_model(self, model, cv):        
+        self.models_[model.model_id_] = model
+        d = {"CV": cv, "Id": model.model_id_, "Estimator": model.name_,
+            "# Features": model.n_features_, "Train Score": model.train_score_,
+            "Test Score": model.test_score_, "Train Time": model.training_time_,
+            "Predict Time": model.prediction_time_}
+        df = pd.DataFrame(data=d, index=[0])
+        self.results_ = pd.concat((self.results_,df), axis=0)
+
+    def detail(self):
+        scores = self.results_.pivot(index="Estimator", columns="CV", values="Test Score")
+        print("\n")
+        print("="*40)
+        print("        Scores by Cross-Validation Set")
+        print("-"*40)
+        print(scores)
+        print("-"*40)
+        return scores
+
+
+    def summary(self):
+        results = self.results_.groupby(by=["Estimator"]).mean()
+        results.sort_values(by="Test Score", inplace=True)
+        print("\n")
+        print("="*40)
+        print("        Performance Results by Algorithm")
+        print("-"*40)
+        print(results)
+        print("-"*40)
+        return results
 
 
 # =========================================================================== #
@@ -510,7 +663,7 @@ class Evaluator(ABC):
     """Evaluates models, stores scores and returns the best model."""
 
     def __init__(self, estimator, param_grid, group, split, k, step=1,
-                 min_features_to_select=10,cv=5, scoring=rmse, n_jobs=2,
+                 min_features_to_select=10,cv=5, scoring=rmse, n_jobs=4,
                  refit=True, verbose=0):
         self._estimator = estimator
         self._param_grid = param_grid
